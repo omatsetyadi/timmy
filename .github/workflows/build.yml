@@ -1,9 +1,14 @@
 name: build
 
+# Auto-builds are DISABLED to conserve free-tier Actions minutes.
+# (Private repo; macOS runners bill at 10x.) Run manually from the Actions tab
+# when you need binaries. To re-enable automatic builds, uncomment the push
+# triggers below.
 on:
-  push:
-    branches: [main]
-    tags: ['v*']
+  workflow_dispatch:
+  # push:
+  #   branches: [main]
+  #   tags: ['v*']
 
 jobs:
   build:
