@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Ref, Stream } from 'effect'
+import { Context, Effect, Fiber, Layer, Ref, Stream } from 'effect'
 import { Config } from '../config/config'
 import { LlmClient, type ChatMessage } from '../llm/llm-client'
 import { ThreadStore } from '../persistence/thread-store'
@@ -59,27 +59,26 @@ export class ChatService extends Context.Tag('timmy/chat/service')<
           // consumer that gets interrupted before it pulls the buffered chunk (spec §9.5).
           const accRef = yield* Ref.make('')
 
-          // The agentic tool-loop, jitera Stream.async + Ref<iteration> shape
-          // (EFFECT_CONVENTIONS §Streaming, WORKFLOW_ENGINE_REFERENCE §5). We use
-          // Stream.asyncEffect (NOT Stream.async): asyncEffect RUNS the registration
-          // Effect as the loop driver, whereas Stream.async would treat a returned
-          // Effect as a finalizer and never execute the recursion.
+          // The agentic tool-loop (EFFECT_CONVENTIONS §Streaming, WORKFLOW_ENGINE_REFERENCE
+          // §5; matches jitera's workflow-stream-processor). We use Stream.async and run the
+          // loop in a DETACHED fiber (Effect.runFork, below) — NOT Stream.asyncEffect with the
+          // loop as the driver. asyncEffect couples the loop to the consumer's pull, so a
+          // blocking step inside it (the 30s confirm wait — or even a full llm.chat turn)
+          // freezes delivery of every already-emitted chunk until it unblocks (proven: an item
+          // emitted before a 3s block wasn't delivered until 3007ms). A detached producer +
+          // callback `emit` flushes each chunk to the consumer immediately, so tokens stream
+          // live AND the mid-stream `confirm_required` reaches the client in time to answer.
           //   - run one llm.chat turn, forwarding every chunk to the consumer
           //   - accumulate tool_call chunks during the turn
           //   - when the turn ends WITH tool_calls: execute each through SafeExecution,
           //     append assistant+tool messages, and loop with the extended history
           //   - stop when a turn has NO tool_calls (normal finish) or the cap is hit
           //     (emit a single {type:'error'} chunk and stop).
-          // Preferred over Stream.concat-recursion: keeping the whole loop inside one
-          // asyncEffect emitter keeps the Effect types simple and gives Task 7 a single
-          // emitter to push confirm_required chunks onto.
-          const loopStream: Stream.Stream<StreamChunk, LlmError> = Stream.asyncEffect<
+          const loopStream: Stream.Stream<StreamChunk, LlmError> = Stream.async<
             StreamChunk,
             LlmError
           >((emit) => {
             // `emit` is callback-based: emit.single(chunk) / emit.end() / emit.fail(err).
-            // asyncEffect RUNS the returned Effect (unlike Stream.async, where it would
-            // be treated as a finalizer), so the recursion below actually drives emission.
             const runIteration = (
               convo: ChatMessage[],
               iteration: number,
@@ -158,9 +157,12 @@ export class ChatService extends Context.Tag('timmy/chat/service')<
                 yield* runIteration(next, iteration + 1)
               })
 
-            // Kick off the loop. Returning the Effect lets asyncEffect run it as the
-            // driver; emit.end()/emit.fail() terminate the consumer-facing stream.
-            return runIteration(messages, 0)
+            // Run the loop in a detached fiber so emitted chunks flush to the consumer
+            // immediately, even while the loop blocks awaiting a confirm. Return a finalizer
+            // that interrupts the producer when the consumer-facing stream ends or is
+            // interrupted (e.g. client disconnect). emit.end()/emit.fail() terminate the stream.
+            const fiber = Effect.runFork(runIteration(messages, 0))
+            return Fiber.interrupt(fiber)
           }, 'unbounded')
 
           // Preserve the foundation's persist-on-finish wrapping around the WHOLE loop

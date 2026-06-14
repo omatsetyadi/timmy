@@ -6,7 +6,7 @@ import { Db } from '../domain/persistence/db'
 import { ThreadStore } from '../domain/persistence/thread-store'
 import { LlmClient } from '../domain/llm/llm-client'
 import { ChatService } from '../domain/chat/chat-service'
-import { ToolSource } from '../domain/tools/tool-source'
+import { PluginToolSource } from '../domain/tools/plugin-tool-source'
 import { ToolRegistry } from '../domain/tools/tool-registry'
 import { SafeExecution } from '../domain/tools/safe-execution'
 import { PendingConfirmations } from '../domain/tools/confirmations'
@@ -22,8 +22,10 @@ import { PendingConfirmations } from '../domain/tools/confirmations'
  *   - `mid` adds ThreadStore (needs Db); `provideMerge(base)` satisfies Db AND keeps
  *     every base service in the output channel.
  *   - `mid` also adds the tools services: SafeExecution (needs PendingConfirmations) and
- *     ToolRegistry (needs ToolSource). Phase 3a uses `ToolSource.empty` (no registered tools)
- *     so `/chat` behaves like the foundation; Phase 3b swaps it for a loader-backed source.
+ *     ToolRegistry (needs ToolSource). Phase 3b wires `PluginToolSource`, which loads plugins
+ *     from `~/.timmy/plugins/` at boot (empty when none installed → `/chat` behaves like the
+ *     foundation). `PluginToolSource` has no requirements, so it stays a dependency-free leaf
+ *     of `base`, exactly like the `ToolSource.empty` it replaces.
  *   - `AppLayer` adds ChatService (needs Config + ThreadStore + LlmClient + ToolRegistry +
  *     SafeExecution); `provideMerge(mid)` satisfies those AND keeps the rest exposed.
  *
@@ -45,7 +47,7 @@ export function buildRuntime() {
       model: frontdesk.model,
     }),
     PendingConfirmations.Live,
-    ToolSource.empty,
+    PluginToolSource,
   )
 
   const mid = Layer.mergeAll(ThreadStore.Live, SafeExecution.Live, ToolRegistry.Live).pipe(

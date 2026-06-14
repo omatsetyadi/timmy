@@ -7,6 +7,7 @@ import { LlmClient } from '../llm/llm-client'
 import { ThreadStore } from '../persistence/thread-store'
 import { SqlError } from '../persistence/errors'
 import { Config } from '../config/config'
+import { CredentialStore } from '../credentials/credential-store'
 import { ToolRegistry } from '../tools/tool-registry'
 import { ToolSource } from '../tools/tool-source'
 import { SafeExecution } from '../tools/safe-execution'
@@ -16,8 +17,10 @@ const ConfigStub = Config.Live(`${process.cwd()}/__nope__.yaml`) // defaults
 
 // Tools wiring for ChatService.Live's new deps. ToolSource.empty → no tools,
 // so the loop makes a single turn and behaves exactly like the foundation.
+// ToolRegistry.Live now also depends on CredentialStore (per-plugin credential scoping),
+// so provide it here too — with no tools registered, nothing ever reads from it.
 const EmptyToolsLayer = Layer.mergeAll(
-  ToolRegistry.Live.pipe(Layer.provide(ToolSource.empty)),
+  ToolRegistry.Live.pipe(Layer.provide(ToolSource.empty), Layer.provide(CredentialStore.Live)),
   SafeExecution.Live.pipe(Layer.provide(PendingConfirmations.Live)),
 )
 const saved: { role: string; content: string }[] = []
@@ -384,3 +387,63 @@ it.live('confirm flow: emits confirm_required, resolves, then tool runs + conten
     ),
   )
 })
+
+// REGRESSION (streaming delivery): confirm_required must reach the consumer WHILE the loop
+// is blocked awaiting the decision — not buffered until the block ends. The original
+// Stream.asyncEffect made the loop the pull-driver, so a blocking confirm froze delivery of
+// every emitted chunk until timeout (proven: an item emitted before a 3s block was delivered
+// at 3007ms), making confirm-tier tools un-confirmable over the live stream. Unlike the test
+// above (which resolves the known id 'k1' directly, so it passed even with the bug), this
+// OBSERVES the chunk from the stream BEFORE resolving — it fails on the buffering regression.
+it.live(
+  'delivers confirm_required to the consumer BEFORE the decision (no block-buffering)',
+  () => {
+    const { counter, layer: RegistryStub } = confirmRegistry()
+    return Effect.gen(function* () {
+      const pc = yield* PendingConfirmations
+      const chat = yield* ChatService
+      const { stream } = yield* chat.send({ message: 'do the danger thing' })
+
+      // Consume in a forked fiber, recording chunks as they ARRIVE (not at stream end).
+      const seen: { type: string }[] = []
+      const fiber = yield* Stream.runForEach(stream, (c) =>
+        Effect.sync(() => void seen.push(c)),
+      ).pipe(Effect.fork)
+
+      // Give the producer time to reach the confirm gate and emit. We do NOT resolve yet:
+      // with the old asyncEffect the chunk would still be buffered (absent) at this point.
+      yield* Effect.sleep('200 millis')
+      expect(seen.some((c) => c.type === 'confirm_required')).toBe(true)
+      expect(counter.executed).toBe(0) // the gate holds — the tool has NOT run yet
+
+      // Approve; the loop unblocks, the tool runs, turn 2 streams content, the stream ends.
+      yield* pc.resolve('k1', true)
+      yield* Fiber.join(fiber)
+      expect(seen.some((c) => c.type === 'content')).toBe(true)
+      expect(counter.executed).toBe(1)
+    }).pipe(
+      Effect.provide(
+        ChatService.Live.pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(
+              ConfigStub,
+              ThreadStub,
+              scriptedLlm([
+                [
+                  { type: 'tool_call', toolCall: { id: 'k1', name: 'danger', arguments: '{}' } },
+                  { type: 'finish', reason: 'tool_calls' },
+                ],
+                [
+                  { type: 'content', content: 'done the danger thing' },
+                  { type: 'finish', reason: 'stop' },
+                ],
+              ]),
+              RegistryStub,
+              SafeExecution.Live.pipe(Layer.provideMerge(PendingConfirmations.Live)),
+            ),
+          ),
+        ),
+      ),
+    )
+  },
+)

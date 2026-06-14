@@ -1,5 +1,6 @@
 import { Context, Effect, Layer } from 'effect'
-import type { Tool, ToolResult } from 'timmy-sdk'
+import type { Tool, ToolContext, ToolResult } from 'timmy-sdk'
+import { CredentialStore } from '../credentials/credential-store'
 import { ToolError, ToolNotFoundError } from './errors'
 import { ToolSource } from './tool-source'
 
@@ -22,30 +23,53 @@ export class ToolRegistry extends Context.Tag('timmy/tools/registry')<
   static Live = Layer.effect(
     ToolRegistry,
     Effect.gen(function* () {
-      const { tools } = yield* ToolSource
-      const byName = new Map<string, Tool>()
-      for (const t of tools) {
-        if (byName.has(t.name)) {
-          yield* Effect.logWarning(`duplicate tool '${t.name}' ignored`)
+      const { tools, credentialScopeByTool } = yield* ToolSource
+      const credStore = yield* CredentialStore
+
+      // Register each tool alongside a credentials object scoped to its owning plugin's
+      // declared keys. Built once at registration time: the scope is static per tool, so
+      // there's no reason to rebuild it on every execute.
+      const byName = new Map<string, { tool: Tool; credentials: ToolContext['credentials'] }>()
+      for (const tool of tools) {
+        if (byName.has(tool.name)) {
+          yield* Effect.logWarning(`duplicate tool '${tool.name}' ignored`)
           continue
         }
-        byName.set(t.name, t)
+        const scope = credentialScopeByTool.get(tool.name)
+        const allowed = new Set(scope?.keys ?? [])
+        // Least-privilege: resolve only keys the owning plugin declared, under the
+        // keychain convention `<pluginName>:<key>`. Undeclared keys (and tools with no
+        // owning plugin, e.g. bare 3a tool lists) never reach the store → always null.
+        // Plugin names are validated colon-free (plugin-schema.ts) so a plugin can't
+        // forge another plugin's credential namespace via the `<pluginName>:<key>` prefix.
+        const credentials: ToolContext['credentials'] = {
+          get: (key: string): Promise<string | null> =>
+            scope && allowed.has(key)
+              ? Effect.runPromise(credStore.get(`${scope.plugin}:${key}`))
+              : Promise.resolve(null),
+        }
+        byName.set(tool.name, { tool, credentials })
       }
-      const credentials = { get: async () => null } // 3a stub; 3b injects per-plugin creds
+
       return {
-        list: () => [...byName.values()],
+        list: () => [...byName.values()].map((e) => e.tool),
         toModelTools: () =>
-          [...byName.values()].map((t) => ({
+          [...byName.values()].map(({ tool }) => ({
             type: 'function' as const,
-            function: { name: t.name, description: t.description, parameters: t.parameters },
+            function: {
+              name: tool.name,
+              description: tool.description,
+              parameters: tool.parameters,
+            },
           })),
         execute: (name, args) =>
           Effect.gen(function* () {
-            const tool = byName.get(name)
-            if (!tool)
+            const entry = byName.get(name)
+            if (!entry)
               return yield* Effect.fail(
                 new ToolNotFoundError({ message: `unknown tool: ${name}`, tool: name }),
               )
+            const { tool, credentials } = entry
             // tryPromise provides an AbortSignal that fires on interruption, so an
             // interrupted turn cancels in-flight tool work. (SafeExecution gating is
             // applied by the caller before this runs.)
