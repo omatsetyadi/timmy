@@ -1,0 +1,28 @@
+{
+  "name": "timmy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Timmy — modular, local-first personal AI assistant platform",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "packages/sdk",
+    "packages/core"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "start": "npm run start --workspace timmy-core",
+    "lint": "eslint .",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.13.0",
+    "@types/node": "^20.16.0",
+    "eslint": "^9.13.0",
+    "prettier": "^3.3.3",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.11.0"
+  }
+}
