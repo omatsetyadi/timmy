@@ -1,8 +1,10 @@
 import { Context, Effect, Layer, Ref, Stream } from 'effect'
 import { Config } from '../config/config'
-import { LlmClient } from '../llm/llm-client'
+import { LlmClient, type ChatMessage } from '../llm/llm-client'
 import { ThreadStore } from '../persistence/thread-store'
-import type { StreamChunk } from '../llm/stream-chunk'
+import { ToolRegistry } from '../tools/tool-registry'
+import { SafeExecution } from '../tools/safe-execution'
+import type { StreamChunk, ToolCallChunk } from '../llm/stream-chunk'
 import type { LlmError } from '../llm/errors'
 import { ChatValidationError, type ChatError } from './errors'
 import { buildMessages } from './prompt'
@@ -11,6 +13,9 @@ export interface SendParams {
   message: string
   threadId?: string
 }
+
+/** Bounded agentic loop: stop after this many tool-result rounds (decision: full agentic loop). */
+const MAX_TOOL_ITERATIONS = 8
 
 export class ChatService extends Context.Tag('timmy/chat/service')<
   ChatService,
@@ -29,6 +34,8 @@ export class ChatService extends Context.Tag('timmy/chat/service')<
       const config = yield* (yield* Config).get
       const store = yield* ThreadStore
       const llm = yield* LlmClient
+      const registry = yield* ToolRegistry
+      const safeExec = yield* SafeExecution
 
       const send = (p: SendParams) =>
         Effect.gen(function* () {
@@ -44,11 +51,122 @@ export class ChatService extends Context.Tag('timmy/chat/service')<
           const messages = buildMessages(config, history, p.message)
           yield* store.addMessage(threadId, 'user', p.message)
 
+          const tools = registry.toModelTools()
+
+          // Accumulate assistant content for end-of-stream persistence. We update this
+          // at the EMIT point inside the loop (not via an outer Stream.tap) so the text
+          // is recorded the instant a content chunk is produced — robust against a
+          // consumer that gets interrupted before it pulls the buffered chunk (spec §9.5).
           const accRef = yield* Ref.make('')
-          const stream = llm.chat(messages).pipe(
-            Stream.tap((chunk) =>
-              chunk.type === 'content' ? Ref.update(accRef, (s) => s + chunk.content) : Effect.void,
-            ),
+
+          // The agentic tool-loop, jitera Stream.async + Ref<iteration> shape
+          // (EFFECT_CONVENTIONS §Streaming, WORKFLOW_ENGINE_REFERENCE §5). We use
+          // Stream.asyncEffect (NOT Stream.async): asyncEffect RUNS the registration
+          // Effect as the loop driver, whereas Stream.async would treat a returned
+          // Effect as a finalizer and never execute the recursion.
+          //   - run one llm.chat turn, forwarding every chunk to the consumer
+          //   - accumulate tool_call chunks during the turn
+          //   - when the turn ends WITH tool_calls: execute each through SafeExecution,
+          //     append assistant+tool messages, and loop with the extended history
+          //   - stop when a turn has NO tool_calls (normal finish) or the cap is hit
+          //     (emit a single {type:'error'} chunk and stop).
+          // Preferred over Stream.concat-recursion: keeping the whole loop inside one
+          // asyncEffect emitter keeps the Effect types simple and gives Task 7 a single
+          // emitter to push confirm_required chunks onto.
+          const loopStream: Stream.Stream<StreamChunk, LlmError> = Stream.asyncEffect<
+            StreamChunk,
+            LlmError
+          >((emit) => {
+            // `emit` is callback-based: emit.single(chunk) / emit.end() / emit.fail(err).
+            // asyncEffect RUNS the returned Effect (unlike Stream.async, where it would
+            // be treated as a finalizer), so the recursion below actually drives emission.
+            const runIteration = (
+              convo: ChatMessage[],
+              iteration: number,
+            ): Effect.Effect<void, LlmError> =>
+              Effect.gen(function* () {
+                const collected: ToolCallChunk[] = []
+                // Forward this turn's chunks to the consumer as they arrive,
+                // accumulating any tool_call chunks for the post-turn execution.
+                yield* llm.chat(convo, tools).pipe(
+                  Stream.runForEach((chunk) =>
+                    Effect.gen(function* () {
+                      if (chunk.type === 'tool_call') collected.push(chunk.toolCall)
+                      if (chunk.type === 'content')
+                        yield* Ref.update(accRef, (s) => s + chunk.content)
+                      emit.single(chunk)
+                    }),
+                  ),
+                  // A turn-level LLM failure ends the whole stream with that error.
+                  Effect.catchAll((e: LlmError) => Effect.sync(() => emit.fail(e))),
+                )
+
+                // No tools requested → the model is done. End the stream.
+                if (collected.length === 0) {
+                  yield* Effect.sync(() => emit.end())
+                  return
+                }
+
+                // Cap reached → emit a single error chunk and stop looping.
+                if (iteration >= MAX_TOOL_ITERATIONS) {
+                  yield* Effect.sync(() => {
+                    emit.single({ type: 'error', message: 'max tool iterations reached' })
+                    emit.end()
+                  })
+                  return
+                }
+
+                // Execute each accumulated tool call in order, feeding results back.
+                const next: ChatMessage[] = [...convo]
+                for (const call of collected) {
+                  const args = yield* parseArgs(call.arguments)
+                  const tool = registry.list().find((t) => t.name === call.name)
+                  const result = tool
+                    ? yield* safeExec.run(
+                        tool,
+                        args,
+                        call.id,
+                        // Wire emitConfirm onto THIS loop's emitter: when SafeExecution
+                        // gates a confirm-tier tool, push a {type:'confirm_required'} chunk
+                        // onto the same `emit` that emits content/tool_call. The client sees
+                        // it mid-stream, then the tool runs (or is declined) once /confirm
+                        // resolves the Deferred SafeExecution is awaiting.
+                        (req) =>
+                          Effect.sync(() =>
+                            emit.single({
+                              type: 'confirm_required',
+                              id: req.id,
+                              tool: req.tool,
+                              description: req.description,
+                            }),
+                          ),
+                        () =>
+                          registry
+                            .execute(call.name, args)
+                            .pipe(
+                              Effect.catchAll((e) =>
+                                Effect.succeed({ ok: false, error: String(e) }),
+                              ),
+                            ),
+                      )
+                    : { ok: false, error: `unknown tool ${call.name}` }
+                  next.push({ role: 'assistant', content: `[tool_call ${call.name}]` })
+                  next.push({ role: 'tool', content: JSON.stringify(result) })
+                }
+
+                // Loop with the extended history.
+                yield* runIteration(next, iteration + 1)
+              })
+
+            // Kick off the loop. Returning the Effect lets asyncEffect run it as the
+            // driver; emit.end()/emit.fail() terminate the consumer-facing stream.
+            return runIteration(messages, 0)
+          }, 'unbounded')
+
+          // Preserve the foundation's persist-on-finish wrapping around the WHOLE loop
+          // stream. Stream.ensuring runs on success/failure/interrupt; accRef was filled
+          // at the emit point above.
+          const stream = loopStream.pipe(
             Stream.ensuring(
               Effect.gen(function* () {
                 const full = yield* Ref.get(accRef)
@@ -68,3 +186,9 @@ export class ChatService extends Context.Tag('timmy/chat/service')<
     }),
   )
 }
+
+/** Parse tool-call arguments JSON; an unparseable string degrades to `{}` rather than killing the turn. */
+const parseArgs = (raw: string): Effect.Effect<Record<string, unknown>> =>
+  Effect.try(() => JSON.parse(raw) as Record<string, unknown>).pipe(
+    Effect.orElseSucceed(() => ({}) as Record<string, unknown>),
+  )

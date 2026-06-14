@@ -7,6 +7,7 @@ export type StreamChunk =
   | { type: 'content'; content: string }
   | { type: 'thinking'; content: string }
   | { type: 'tool_call'; toolCall: ToolCallChunk } // shape defined; unused until Phase 3
+  | { type: 'confirm_required'; id: string; tool: string; description: string }
   | { type: 'finish'; reason: 'stop' | 'length' | 'tool_calls' }
   | { type: 'usage'; promptTokens: number; completionTokens: number }
   | { type: 'error'; message: string }

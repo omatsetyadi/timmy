@@ -6,6 +6,7 @@ import type { TimmyConfig } from '../domain/config/config'
 import { CredentialStore } from '../domain/credentials/credential-store'
 import { LlmClient } from '../domain/llm/llm-client'
 import { ThreadStore } from '../domain/persistence/thread-store'
+import { PendingConfirmations } from '../domain/tools/confirmations'
 
 /** Keychain account holding the server's bearer token. */
 const AUTH_TOKEN_KEY = 'server:auth_token'
@@ -16,7 +17,7 @@ const PUBLIC_ROUTES = new Set(['/health'])
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost'])
 
 /** The services the routes resolve from the runtime. */
-type AppServices = ChatService | ThreadStore | LlmClient | CredentialStore
+type AppServices = ChatService | ThreadStore | LlmClient | CredentialStore | PendingConfirmations
 
 /**
  * Build the timmy-core HTTP + WebSocket server. Caller calls `.listen()`.
@@ -119,6 +120,19 @@ export async function buildServer(
     req.raw.on('close', () => {
       runtime.runFork(Fiber.interrupt(fiber))
     })
+  })
+
+  // Resolve a pending confirm-tier tool request (surfaced mid-/chat as a
+  // {type:'confirm_required'} chunk). A protected route — auth applies via the
+  // onRequest hook since it is NOT in PUBLIC_ROUTES.
+  app.post('/confirm/:id', async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const body = (req.body ?? {}) as { allowed?: boolean }
+    const resolved = await runtime.runPromise(
+      PendingConfirmations.pipe(Effect.flatMap((p) => p.resolve(id, body.allowed === true))),
+    )
+    if (!resolved) return reply.code(404).send({ resolved: false })
+    return reply.code(200).send({ resolved: true })
   })
 
   // WebSocket for voice/dashboard streaming (real handlers arrive later).

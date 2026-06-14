@@ -4,7 +4,7 @@ import { parseOllamaLine } from './ollama-parser'
 import type { StreamChunk } from './stream-chunk'
 
 export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant'
+  role: 'system' | 'user' | 'assistant' | 'tool'
   content: string
 }
 export interface DetectedCapabilities {
@@ -21,14 +21,17 @@ export interface LlmConfig {
 export class LlmClient extends Context.Tag('timmy/llm/client')<
   LlmClient,
   {
-    readonly chat: (messages: ChatMessage[]) => Stream.Stream<StreamChunk, LlmError>
+    readonly chat: (
+      messages: ChatMessage[],
+      tools?: unknown[],
+    ) => Stream.Stream<StreamChunk, LlmError>
     readonly isAvailable: () => Effect.Effect<boolean>
     readonly detectCapabilities: () => Effect.Effect<DetectedCapabilities>
   }
 >() {
   static Live = (config: LlmConfig) =>
     Layer.succeed(LlmClient, {
-      chat: (messages) =>
+      chat: (messages, tools) =>
         Stream.unwrap(
           Effect.gen(function* () {
             const res = yield* Effect.tryPromise({
@@ -39,6 +42,7 @@ export class LlmClient extends Context.Tag('timmy/llm/client')<
                   body: JSON.stringify({
                     model: config.model,
                     messages,
+                    tools,
                     stream: true,
                     think: false,
                   }),

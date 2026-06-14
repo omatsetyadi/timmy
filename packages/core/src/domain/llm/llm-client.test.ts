@@ -35,3 +35,29 @@ it.effect('streams content chunks from a mocked Ollama response', () =>
     ])
   }).pipe(Effect.provide(LlmClient.Live({ baseUrl: 'http://x', model: 'qwen3:14b' }))),
 )
+
+it.effect('streams a tool_call when the model calls a tool', () =>
+  Effect.gen(function* () {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        ndjson([
+          {
+            message: {
+              tool_calls: [{ function: { name: 'openApp', arguments: { name: 'Spotify' } } }],
+            },
+          },
+          { done: true },
+        ]),
+        { status: 200 },
+      ),
+    )
+    const client = yield* LlmClient
+    const tools = [
+      { type: 'function', function: { name: 'openApp', description: 'open', parameters: {} } },
+    ]
+    const chunks = Chunk.toArray(
+      yield* Stream.runCollect(client.chat([{ role: 'user', content: 'open spotify' }], tools)),
+    )
+    expect(chunks.map((c) => c.type)).toEqual(['tool_call', 'finish'])
+  }).pipe(Effect.provide(LlmClient.Live({ baseUrl: 'http://x', model: 'qwen3:14b' }))),
+)

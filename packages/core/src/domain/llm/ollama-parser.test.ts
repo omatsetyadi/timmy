@@ -18,3 +18,24 @@ it.effect('parses content, thinking, finish; skips malformed', () =>
     expect(yield* parseOllamaLine('{ not json')).toBeNull() // degrade-don't-die
   }),
 )
+
+it.effect('parses an Ollama tool_call line', () =>
+  Effect.gen(function* () {
+    const line = JSON.stringify({
+      message: {
+        content: '',
+        tool_calls: [{ function: { name: 'openApp', arguments: { name: 'Spotify' } } }],
+      },
+      done: false,
+    })
+    const chunk = yield* parseOllamaLine(line)
+    expect(chunk).toEqual({
+      type: 'tool_call',
+      toolCall: {
+        id: chunk && chunk.type === 'tool_call' ? chunk.toolCall.id : '',
+        name: 'openApp',
+        arguments: '{"name":"Spotify"}',
+      },
+    })
+  }),
+)

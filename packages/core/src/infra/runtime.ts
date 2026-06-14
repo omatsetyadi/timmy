@@ -6,6 +6,10 @@ import { Db } from '../domain/persistence/db'
 import { ThreadStore } from '../domain/persistence/thread-store'
 import { LlmClient } from '../domain/llm/llm-client'
 import { ChatService } from '../domain/chat/chat-service'
+import { ToolSource } from '../domain/tools/tool-source'
+import { ToolRegistry } from '../domain/tools/tool-registry'
+import { SafeExecution } from '../domain/tools/safe-execution'
+import { PendingConfirmations } from '../domain/tools/confirmations'
 
 /**
  * Build the full application layer once at boot and wrap it in a ManagedRuntime.
@@ -17,8 +21,11 @@ import { ChatService } from '../domain/chat/chat-service'
  *   - `base` merges the dependency-free layers: Config, Db, CredentialStore, LlmClient.
  *   - `mid` adds ThreadStore (needs Db); `provideMerge(base)` satisfies Db AND keeps
  *     every base service in the output channel.
- *   - `AppLayer` adds ChatService (needs Config + ThreadStore + LlmClient); `provideMerge(mid)`
- *     satisfies those AND keeps ThreadStore + the base services exposed.
+ *   - `mid` also adds the tools services: SafeExecution (needs PendingConfirmations) and
+ *     ToolRegistry (needs ToolSource). Phase 3a uses `ToolSource.empty` (no registered tools)
+ *     so `/chat` behaves like the foundation; Phase 3b swaps it for a loader-backed source.
+ *   - `AppLayer` adds ChatService (needs Config + ThreadStore + LlmClient + ToolRegistry +
+ *     SafeExecution); `provideMerge(mid)` satisfies those AND keeps the rest exposed.
  *
  * Using `provideMerge` (not `provide`) everywhere is what keeps ChatService, ThreadStore,
  * LlmClient, Db, Config and CredentialStore all in the success channel so the runtime can
@@ -37,9 +44,13 @@ export function buildRuntime() {
       baseUrl: frontdesk.base_url ?? 'http://localhost:11434',
       model: frontdesk.model,
     }),
+    PendingConfirmations.Live,
+    ToolSource.empty,
   )
 
-  const mid = ThreadStore.Live.pipe(Layer.provideMerge(base))
+  const mid = Layer.mergeAll(ThreadStore.Live, SafeExecution.Live, ToolRegistry.Live).pipe(
+    Layer.provideMerge(base),
+  )
 
   const AppLayer = ChatService.Live.pipe(Layer.provideMerge(mid))
 
