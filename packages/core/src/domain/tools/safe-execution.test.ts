@@ -1,5 +1,5 @@
 import { it } from '@effect/vitest'
-import { Effect, Fiber, Layer, TestClock } from 'effect'
+import { Effect, Fiber, Layer, Option, TestClock } from 'effect'
 import { expect } from 'vitest'
 import type { Tool } from 'timmy-sdk'
 import { PendingConfirmations } from './confirmations'
@@ -68,15 +68,23 @@ it.live('confirm tier declines when rejected', () =>
   }).pipe(Effect.provide(layer)),
 )
 
-it.effect('confirm tier times out (distinct from declined) after 30s', () =>
+// Phase 3c: Model A — the confirm gate has NO timeout. It waits as long as the user
+// needs; a late decision still runs. (Old behavior: auto-'timeout' after 30s. With the
+// old code this test fails — advancing the clock would resolve the gate as 'timeout'
+// before we ever call resolve, so the tool would never run.)
+it.effect('confirm tier does NOT time out — waits indefinitely, a late decision still runs', () =>
   Effect.gen(function* () {
+    const pc = yield* PendingConfirmations
     const se = yield* SafeExecution
     const fiber = yield* Effect.fork(
-      se.run(mk('confirm'), {}, 'id5', noEmit, () => Effect.die('should not run')),
+      se.run(mk('confirm'), {}, 'id5', noEmit, () => Effect.succeed({ ok: true, data: 'ran' })),
     )
-    yield* TestClock.adjust('31 seconds')
+    // Advance far past the old 30s timeout — the gate must STILL be pending, not resolved.
+    yield* TestClock.adjust('10 minutes')
+    expect(yield* Fiber.poll(fiber)).toStrictEqual(Option.none())
+    // A late 'allow' still works (no abandonment): the tool runs.
+    yield* pc.resolve('id5', true)
     const r = yield* Fiber.join(fiber)
-    expect(r.ok).toBe(false)
-    expect(r.error).toBe('timeout')
+    expect(r).toStrictEqual({ ok: true, data: 'ran' })
   }).pipe(Effect.provide(layer)),
 )

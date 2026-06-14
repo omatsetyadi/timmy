@@ -1,8 +1,6 @@
-import { Context, Deferred, Effect, Layer, Option } from 'effect'
+import { Context, Deferred, Effect, Layer } from 'effect'
 import type { Tool, ToolResult } from 'timmy-sdk'
 import { PendingConfirmations } from './confirmations'
-
-const CONFIRM_TIMEOUT = '30 seconds'
 
 /** Emits a confirm_required signal (the tool-loop wires this to a stream chunk). */
 export type EmitConfirm = (req: {
@@ -33,18 +31,18 @@ export class SafeExecution extends Context.Tag('timmy/tools/safe-execution')<
           Effect.gen(function* () {
             if (tool.riskLevel === 'blocked') return { ok: false, error: 'blocked' }
             if (tool.riskLevel === 'safe') return yield* execute()
-            // confirm:
+            // confirm tier: emit the prompt, then wait for the human's decision.
             const deferred = yield* pending.create(id)
             yield* emitConfirm({ id, tool: tool.name, description: `Run ${tool.name}?` })
-            // Await the human's decision; `ensuring(remove)` drops the pending entry
-            // on success, timeout, OR interrupt so the map can't leak. timeoutOption
-            // → None = no answer in time (timeout), Some(allowed) = explicit decision.
-            const decision = yield* Deferred.await(deferred).pipe(
-              Effect.timeoutOption(CONFIRM_TIMEOUT),
+            // Wait INDEFINITELY for allow/deny — Model A: a conversational/voice gate
+            // waits as long as the user needs (no hard timeout). `ensuring(remove)` drops
+            // the pending entry on a decision OR on interrupt — i.e. when the user abandons
+            // the session (closes the connection) — so the map never leaks and an abandoned
+            // action is simply never run. (Was a 30s timeout; removed in Phase 3c.)
+            const allowed = yield* Deferred.await(deferred).pipe(
               Effect.ensuring(pending.remove(id)),
             )
-            if (Option.isNone(decision)) return { ok: false, error: 'timeout' }
-            return decision.value ? yield* execute() : { ok: false, error: 'declined' }
+            return allowed ? yield* execute() : { ok: false, error: 'declined' }
           }),
       }
     }),
