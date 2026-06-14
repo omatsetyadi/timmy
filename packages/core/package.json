@@ -15,12 +15,14 @@
   },
   "dependencies": {
     "@napi-rs/keyring": "^1.3.0",
+    "better-sqlite3": "^12.10.1",
     "fastify": "^5.8.5",
     "js-yaml": "^4.2.0",
     "socket.io": "^4.8.3",
     "timmy-sdk": "workspace:*"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/js-yaml": "^4.0.9"
   }
 }

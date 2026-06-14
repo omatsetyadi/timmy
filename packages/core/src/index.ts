@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { loadConfig } from './config'
 import { KeychainCredentialStore } from './credentials'
+import { initDb } from './db'
+import { createFrontdeskProvider } from './providers'
 import { buildServer } from './server'
 
 const VERSION = '0.1.0'
@@ -8,7 +10,18 @@ const VERSION = '0.1.0'
 async function start(): Promise<void> {
   const config = loadConfig()
   const credentials = new KeychainCredentialStore()
-  const app = await buildServer({ config, credentials })
+
+  initDb()
+  const provider = createFrontdeskProvider(config)
+  const available = await provider.isAvailable()
+  if (!available) {
+    console.warn(
+      `Frontdesk provider "${config.models.frontdesk.provider}" (${config.models.frontdesk.model}) is not reachable — chat will fail until it's up.`,
+    )
+  }
+  const capabilities = await provider.detectCapabilities()
+
+  const app = await buildServer({ config, credentials, provider, capabilities })
   await app.listen({ host: config.server.host, port: config.server.port })
   // Fastify's logger reports the listening address.
 
