@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { CONFIG_DIR, readConfigSync } from '../domain/config/config'
-import { hasBuiltEntry, installLocal, listInstalled, remove } from './plugin-cli'
+import { hasBuiltEntry, installFromGithub, installLocal, listInstalled, remove } from './plugin-cli'
 import { buildRuntime } from './runtime'
 import { buildServer } from './server'
 
@@ -49,14 +49,19 @@ function plugin(args: readonly string[]): void {
       console.error('Usage: timmy plugin install <path>')
       process.exit(1)
     }
-    // github: (and any other non-local scheme) is Phase 3.1 — refuse rather than guess.
-    // RFC-3986 scheme shape: a letter followed by 1+ scheme chars, so the `+` (not `*`)
-    // requires a scheme of length ≥2 — this catches github:/https:/file:/npm: while
-    // intentionally letting Windows drive letters (C:\..., D:\...) through.
+    mkdirSync(pluginsDir, { recursive: true })
+    // github:user/repo → clone + `npm install` + build at the target (resolving the
+    // published deps), then install the built bundle.
+    if (src.startsWith('github:')) {
+      const name = installFromGithub(src, pluginsDir)
+      console.log(`installed '${name}' from ${src} → ${join(pluginsDir, name)}`)
+      return
+    }
+    // Any OTHER scheme (https:, npm:, file:, …) is unsupported. RFC-3986 scheme shape:
+    // a letter then 1+ scheme chars (the `+` requires length ≥2), so it catches schemes
+    // while letting Windows drive letters (C:\…) through as local paths.
     if (/^[a-z][a-z0-9+.-]+:/i.test(src)) {
-      console.error(
-        `'${src}' is not a local path — github install lands in Phase 3.1; for now build the plugin and install from a local path`,
-      )
+      console.error(`'${src}' — only a local path or github:user/repo is supported`)
       process.exit(1)
     }
     if (!hasBuiltEntry(src)) {
@@ -65,7 +70,6 @@ function plugin(args: readonly string[]): void {
       )
       process.exit(1)
     }
-    mkdirSync(pluginsDir, { recursive: true })
     const name = installLocal(src, pluginsDir)
     console.log(`installed '${name}' → ${join(pluginsDir, name)}`)
     return

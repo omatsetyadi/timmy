@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { hasBuiltEntry, installLocal, listInstalled, remove } from './plugin-cli'
+import { hasBuiltEntry, installLocal, listInstalled, parseGithubSpec, remove } from './plugin-cli'
 
 /** Build a fake "built" plugin source dir: `<root>/<name>/dist/index.js` + `package.json`.
  *  Returns the plugin source dir path. */
@@ -118,5 +118,32 @@ describe('hasBuiltEntry', () => {
     const src = mkdtempSync(join(tmpdir(), 'plugin-entry-'))
 
     expect(hasBuiltEntry(src)).toBe(false)
+  })
+})
+
+describe('parseGithubSpec', () => {
+  it('parses github:user/repo', () => {
+    expect(parseGithubSpec('github:omatsetyadi/timmy-plugin-machine')).toEqual({
+      user: 'omatsetyadi',
+      repo: 'timmy-plugin-machine',
+      ref: undefined,
+    })
+  })
+
+  it('parses an optional #ref', () => {
+    expect(parseGithubSpec('github:user/repo#v1.2.0')).toEqual({
+      user: 'user',
+      repo: 'repo',
+      ref: 'v1.2.0',
+    })
+  })
+
+  it('strips a trailing .git', () => {
+    expect(parseGithubSpec('github:user/repo.git')).toMatchObject({ repo: 'repo' })
+  })
+
+  it('throws on a malformed spec', () => {
+    expect(() => parseGithubSpec('not-a-github-spec')).toThrow(/invalid github spec/)
+    expect(() => parseGithubSpec('github:no-slash')).toThrow(/invalid github spec/)
   })
 })
