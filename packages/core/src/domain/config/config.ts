@@ -59,6 +59,13 @@ function loadConfig(path: string): TimmyConfig {
   }
 }
 
+/** Synchronously load the config (defaults merged with the file at `path`, if any).
+ *  Exposes the internal `loadConfig` so callers (e.g. the runtime) can read concrete
+ *  values eagerly to parameterize layers like `Db.Live(dbPath)` / `LlmClient.Live(cfg)`. */
+export function readConfigSync(path: string = CONFIG_PATH): TimmyConfig {
+  return loadConfig(path)
+}
+
 export class Config extends Context.Tag('timmy/config/config')<
   Config,
   { readonly get: Effect.Effect<TimmyConfig> }
