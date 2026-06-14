@@ -11,17 +11,17 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            target: node20-macos-arm64
+            target: node24-macos-arm64
             output: timmy-core-macos
           - os: windows-latest
-            target: node20-win-x64
+            target: node24-win-x64
             output: timmy-core-win.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: .nvmrc
       - run: npm ci
       - run: npm run build
       - name: Smoke test

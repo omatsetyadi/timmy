@@ -28,4 +28,4 @@ npm run lint
 npm run format
 ```
 
-Requires Node.js 20+.
+Requires Node.js 24+ (current LTS — see `.nvmrc`; run `nvm use`).

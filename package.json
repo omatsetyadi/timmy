@@ -5,7 +5,7 @@
   "description": "Timmy — modular, local-first personal AI assistant platform",
   "license": "UNLICENSED",
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "workspaces": [
     "packages/sdk",
@@ -18,11 +18,11 @@
     "format": "prettier --write ."
   },
   "devDependencies": {
-    "@eslint/js": "^9.13.0",
-    "@types/node": "^20.16.0",
-    "eslint": "^9.13.0",
+    "@eslint/js": "^10.0.0",
+    "@types/node": "^24.0.0",
+    "eslint": "^10.5.0",
     "prettier": "^3.3.3",
-    "typescript": "^5.6.3",
-    "typescript-eslint": "^8.11.0"
+    "typescript": "^6.0.0",
+    "typescript-eslint": "^8.61.0"
   }
 }
