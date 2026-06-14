@@ -21,11 +21,16 @@ Tool logic lives in the separate [`agent-tool-calls`](https://github.com/omatset
 ## Develop
 
 ```bash
-npm install          # install workspace deps
-npm run build        # build all packages
-npm start            # run timmy-core → prints "Timmy v0.1.0"
-npm run lint
-npm run format
+corepack enable pnpm # activate the pinned pnpm (first time only)
+pnpm install         # install workspace deps
+pnpm dev             # run timmy-core in watch mode (turbo → tsx) — hot reloads on save
+pnpm build           # build all packages (turbo, cached)
+pnpm start           # run built timmy-core (server on 127.0.0.1:3737)
+pnpm typecheck       # turbo (also runs on pre-commit)
+pnpm lint            # eslint (also runs on pre-commit, --fix on staged files)
+pnpm format          # prettier --write
 ```
+
+Tooling: **pnpm** workspaces + **Turborepo** task orchestration. A husky **pre-commit** hook runs typecheck + lint + prettier on staged files.
 
 Requires Node.js 24+ (current LTS — see `.nvmrc`; run `nvm use`).

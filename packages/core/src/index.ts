@@ -1,16 +1,66 @@
 #!/usr/bin/env node
-/**
- * timmy-core entry point.
- *
- * Phase 0 deliverable: print the version and exit. The HTTP/WS server,
- * config loading, and credential store arrive in Phase 1.
- */
+import { loadConfig } from './config'
+import { KeychainCredentialStore } from './credentials'
+import { buildServer } from './server'
 
 const VERSION = '0.1.0'
 
+async function start(): Promise<void> {
+  const config = loadConfig()
+  const credentials = new KeychainCredentialStore()
+  const app = await buildServer({ config, credentials })
+  await app.listen({ host: config.server.host, port: config.server.port })
+  // Fastify's logger reports the listening address.
+
+  // Close gracefully so the port is released on stop / dev hot-reload restart.
+  const shutdown = async (signal: string) => {
+    app.log.info({ signal }, 'shutting down')
+    await app.close()
+    process.exit(0)
+  }
+  process.once('SIGINT', () => void shutdown('SIGINT'))
+  process.once('SIGTERM', () => void shutdown('SIGTERM'))
+}
+
+async function status(): Promise<void> {
+  const { host, port } = loadConfig().server
+  const reachable = host === '0.0.0.0' ? '127.0.0.1' : host
+  const url = `http://${reachable}:${port}/health`
+  try {
+    const res = await fetch(url)
+    console.log(`Timmy is up at ${url} →`, await res.json())
+  } catch {
+    console.log(`Timmy is not responding at ${url}`)
+    process.exit(1)
+  }
+}
+
+function usage(): void {
+  console.log(`Timmy v${VERSION}\nUsage: timmy <start|status|version>`)
+}
+
 function main(): void {
-  console.log(`Timmy v${VERSION}`)
-  process.exit(0)
+  const cmd = process.argv[2]
+  switch (cmd) {
+    case 'start':
+      void start()
+      break
+    case 'status':
+      void status()
+      break
+    case 'version':
+    case '--version':
+    case '-v':
+      console.log(`Timmy v${VERSION}`)
+      break
+    case undefined:
+      usage()
+      break
+    default:
+      console.error(`Unknown command: ${cmd}`)
+      usage()
+      process.exit(1)
+  }
 }
 
 main()

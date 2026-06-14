@@ -1,0 +1,9 @@
+packages:
+  - packages/sdk
+  - packages/core
+
+# Dependencies allowed to run install/build scripts (pnpm 11 blocks these by
+# default; this is the v11 `allowBuilds` map that replaced onlyBuiltDependencies).
+# esbuild powers tsx (dev hot-reload).
+allowBuilds:
+  esbuild: true

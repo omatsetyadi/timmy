@@ -4,24 +4,36 @@
   "private": true,
   "description": "Timmy — modular, local-first personal AI assistant platform",
   "license": "UNLICENSED",
+  "packageManager": "pnpm@11.6.0",
   "engines": {
     "node": ">=24"
   },
-  "workspaces": [
-    "packages/sdk",
-    "packages/core"
-  ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
-    "start": "npm run start --workspace timmy-core",
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "typecheck": "turbo run typecheck",
     "lint": "eslint .",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,yaml,yml}": [
+      "prettier --write"
+    ]
   },
   "devDependencies": {
     "@eslint/js": "^10.0.0",
     "@types/node": "^24.0.0",
     "eslint": "^10.5.0",
+    "husky": "^9.1.6",
+    "lint-staged": "^15.2.10",
     "prettier": "^3.3.3",
+    "tsx": "^4.20.0",
+    "turbo": "^2.9.18",
     "typescript": "^6.0.0",
     "typescript-eslint": "^8.61.0"
   }
