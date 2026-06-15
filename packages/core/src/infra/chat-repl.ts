@@ -213,8 +213,14 @@ async function handleConfirm(
   frame: { id: string; tool: string; description: string },
   ask: (q: string) => Promise<string>,
 ): Promise<void> {
+  // Show the actual args (command/script) indented on their own lines so the user approves
+  // with full sight of what will run — not just the tool name.
+  const detail = frame.description
+    .split('\n')
+    .map((l) => `    ${l}`)
+    .join('\n')
   const answer = await ask(
-    `\n\x1b[33m⚠\x1b[0m ${frame.tool} wants to: ${frame.description}\n  approve? (y/N) `,
+    `\n\x1b[33m⚠\x1b[0m ${frame.tool} wants to run:\n${detail}\n  approve? (y/N) `,
   )
   const allowed = answer.trim().toLowerCase() === 'y'
   await fetch(`${daemon.base}/confirm/${frame.id}`, {

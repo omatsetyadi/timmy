@@ -1,11 +1,29 @@
 import { it } from '@effect/vitest'
+import { describe } from 'vitest'
 import { Effect, Fiber, Layer, Option, TestClock } from 'effect'
 import { expect } from 'vitest'
 import type { Tool } from 'timmy-sdk'
 import { Config } from '../config/config'
 import { PendingConfirmations } from './confirmations'
-import { SafeExecution } from './safe-execution'
+import { SafeExecution, confirmDescription } from './safe-execution'
 import { ToolSource } from './tool-source'
+
+describe('confirmDescription', () => {
+  it('shows the actual args (so the user sees the real command/script)', () => {
+    expect(confirmDescription({ script: 'tell application "Photo Booth" to activate' })).toContain(
+      'tell application "Photo Booth"',
+    )
+    expect(confirmDescription({ command: 'rm -rf /tmp/x' })).toContain('rm -rf /tmp/x')
+  })
+  it('handles no-arg tools', () => {
+    expect(confirmDescription({})).toBe('(no arguments)')
+  })
+  it('truncates a huge arg', () => {
+    const r = confirmDescription({ script: 'x'.repeat(5000) })
+    expect(r.length).toBeLessThan(1000)
+    expect(r).toContain('…')
+  })
+})
 
 const mk = (riskLevel: Tool['riskLevel']): Tool => ({
   name: 't',

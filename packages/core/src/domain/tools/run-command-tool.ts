@@ -14,6 +14,15 @@ export type CommandRunner = (
   opts: { cwd?: string; signal?: AbortSignal },
 ) => Promise<CommandResult>
 
+/** Cap accumulated command output so a chatty command can't flood the model's context (the tool
+ *  result is sent back to the LLM). Appends a marker once the limit is hit, then stops growing. */
+export const MAX_COMMAND_OUTPUT = 16 * 1024
+export function capOutput(current: string, chunk: string, max = MAX_COMMAND_OUTPUT): string {
+  if (current.length >= max) return current
+  const room = max - current.length
+  return chunk.length <= room ? current + chunk : current + chunk.slice(0, room) + '\n…[truncated]'
+}
+
 const defaultRunner: CommandRunner = (command, opts) =>
   new Promise<CommandResult>((resolve, reject) => {
     // shell:true runs via the OS shell (sh -c / cmd /c) — required because the tool's whole
@@ -24,11 +33,18 @@ const defaultRunner: CommandRunner = (command, opts) =>
     // resolves to `ask`, so shell:true's capability is only ever exercised on a human-approved
     // command. (A filesystem/network sandbox is a deliberate non-goal here — see the spec; a
     // future hardening if Timmy ever runs untrusted.)
-    const child = spawn(command, { shell: true, cwd: opts.cwd, signal: opts.signal })
+    // stdin closed ('ignore') so an interactive command (a prompt/pager) gets EOF and exits
+    // instead of hanging forever; output is capped so a chatty command can't flood the context.
+    const child = spawn(command, {
+      shell: true,
+      cwd: opts.cwd,
+      signal: opts.signal,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
     let stdout = ''
     let stderr = ''
-    child.stdout?.on('data', (d: Buffer) => (stdout += d.toString()))
-    child.stderr?.on('data', (d: Buffer) => (stderr += d.toString()))
+    child.stdout?.on('data', (d: Buffer) => (stdout = capOutput(stdout, d.toString())))
+    child.stderr?.on('data', (d: Buffer) => (stderr = capOutput(stderr, d.toString())))
     child.on('error', reject)
     child.on('close', (code) => resolve({ stdout, stderr, code: code ?? 0 }))
   })

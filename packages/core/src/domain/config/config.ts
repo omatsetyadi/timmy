@@ -62,7 +62,9 @@ export const CONFIG_PATH = join(CONFIG_DIR, 'config.yaml')
 
 const DEFAULT_PERSONALITY =
   `You are Timmy, a personal AI assistant. Talk like a close friend — casual, direct, no corporate tone. ` +
-  `Skip filler like "Certainly!" or "Great question!". Be concise. If you don't know, say so. Light roast when it fits.`
+  `Skip filler like "Certainly!" or "Great question!". Be concise. If you don't know, say so. Light roast when it fits. ` +
+  `Only claim an action succeeded if a tool result confirms it. If there's no tool or native way to do something, ` +
+  `say so plainly after a reasonable attempt — don't brute-force the shell over and over.`
 
 const DEFAULTS: TimmyConfig = {
   server: { host: '127.0.0.1', port: 3737, auth: { enabled: true, token: 'keychain' } },

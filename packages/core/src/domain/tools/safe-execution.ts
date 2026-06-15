@@ -12,6 +12,15 @@ export type EmitConfirm = (req: {
   description: string
 }) => Effect.Effect<void>
 
+/** A preview of what a tool call will actually do — shown in the confirm prompt so the user
+ *  approves with sight of the real command/script, not just the tool name. Truncates long args. */
+export const confirmDescription = (args: Record<string, unknown>): string => {
+  const entries = Object.entries(args).filter(([, v]) => v !== undefined && v !== null && v !== '')
+  if (entries.length === 0) return '(no arguments)'
+  const trunc = (s: string): string => (s.length > 600 ? s.slice(0, 600) + '…' : s)
+  return entries.map(([k, v]) => `${k}: ${trunc(String(v))}`).join('\n')
+}
+
 export class SafeExecution extends Context.Tag('timmy/tools/safe-execution')<
   SafeExecution,
   {
@@ -51,7 +60,7 @@ export class SafeExecution extends Context.Tag('timmy/tools/safe-execution')<
             // ask: emit the prompt, then wait INDEFINITELY for the human's decision (Model A —
             // no timeout). `ensuring(remove)` drops the pending entry on a decision OR interrupt.
             const deferred = yield* pending.create(id)
-            yield* emitConfirm({ id, tool: tool.name, description: `Run ${tool.name}?` })
+            yield* emitConfirm({ id, tool: tool.name, description: confirmDescription(args) })
             const allowed = yield* Deferred.await(deferred).pipe(
               Effect.ensuring(pending.remove(id)),
             )

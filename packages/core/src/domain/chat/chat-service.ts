@@ -18,8 +18,11 @@ export interface SendParams {
   threadId?: string
 }
 
-/** Bounded agentic loop: stop after this many tool-result rounds (decision: full agentic loop). */
-const MAX_TOOL_ITERATIONS = 8
+/** Bounded agentic loop: stop after this many tool-result rounds. This is a runaway backstop,
+ *  NOT a task budget — each round is one model turn (typically one tool call + verify), so real
+ *  multi-step work (e.g. app-control: open → verify → focus → act → confirm) needs headroom.
+ *  Sized generously; a genuine task that exceeds this is almost certainly stuck in a loop. */
+const MAX_TOOL_ITERATIONS = 25
 
 export class ChatService extends Context.Tag('timmy/chat/service')<
   ChatService,

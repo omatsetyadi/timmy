@@ -133,7 +133,7 @@ const realBundle = join(
 )
 
 const maybe = existsSync(realBundle) ? it.effect : it.effect.skip
-maybe('loads the real timmy-plugin-machine tsup bundle (machine, 5 tools)', () =>
+maybe('loads the real timmy-plugin-machine tsup bundle (machine, base + app-control tools)', () =>
   Effect.gen(function* () {
     const root = mkdtempSync(join(tmpdir(), 'plugins-real-'))
     const dir = join(root, 'timmy-plugin-machine')
@@ -141,7 +141,11 @@ maybe('loads the real timmy-plugin-machine tsup bundle (machine, 5 tools)', () =
     copyFileSync(realBundle, join(dir, 'index.js'))
     const plugins = yield* PluginLoader.load(root)
     expect(plugins.map((p) => p.name)).toEqual(['machine'])
-    expect(plugins[0]!.tools).toHaveLength(5)
+    const names = plugins[0]!.tools.map((t) => t.name)
+    // base 5 + app-control 3 (on macOS); assert the app-control ones are present + all runnable.
+    expect(names).toEqual(
+      expect.arrayContaining(['runAppleScript', 'listRunningApps', 'appControlDoctor']),
+    )
     expect(plugins[0]!.tools.every((t) => typeof t.execute === 'function')).toBe(true)
   }),
 )
