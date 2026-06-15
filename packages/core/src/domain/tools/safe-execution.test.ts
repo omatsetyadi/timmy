@@ -2,8 +2,10 @@ import { it } from '@effect/vitest'
 import { Effect, Fiber, Layer, Option, TestClock } from 'effect'
 import { expect } from 'vitest'
 import type { Tool } from 'timmy-sdk'
+import { Config } from '../config/config'
 import { PendingConfirmations } from './confirmations'
 import { SafeExecution } from './safe-execution'
+import { ToolSource } from './tool-source'
 
 const mk = (riskLevel: Tool['riskLevel']): Tool => ({
   name: 't',
@@ -12,7 +14,13 @@ const mk = (riskLevel: Tool['riskLevel']): Tool => ({
   parameters: {},
   execute: async () => ({ ok: true, data: 'ran' }),
 })
-const layer = SafeExecution.Live.pipe(Layer.provideMerge(PendingConfirmations.Live))
+// Default config (no file) → permissions { mode: 'default' }, so safe→allow, confirm→ask,
+// blocked→block — identical to the pre-resolver behavior these tests assert.
+const layer = SafeExecution.Live.pipe(
+  Layer.provideMerge(PendingConfirmations.Live),
+  Layer.provide(Config.Live('/nonexistent/timmy-test.yaml')),
+  Layer.provide(ToolSource.empty),
+)
 const noEmit = () => Effect.void
 
 it.effect('safe tier runs immediately', () =>

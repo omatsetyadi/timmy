@@ -3,8 +3,12 @@ import { Effect, Layer } from 'effect'
 import { expect } from 'vitest'
 import { Platform, type Tool } from 'timmy-sdk'
 import { CredentialStore } from '../credentials/credential-store'
+import { Config } from '../config/config'
 import { ToolRegistry } from './tool-registry'
 import { ToolSource } from './tool-source'
+
+// Config with no file → defaults (permissions { mode: 'default' }).
+const NoConfig = Config.Live('/nonexistent/timmy-test.yaml')
 
 const echo: Tool = {
   name: 'echo',
@@ -26,6 +30,7 @@ const CredStub = Layer.succeed(CredentialStore, {
 const layer = ToolRegistry.Live.pipe(
   Layer.provide(ToolSource.layer([echo])),
   Layer.provide(CredStub),
+  Layer.provide(NoConfig),
 )
 
 it.effect('lists tools, exposes model schemas, executes by name', () =>
@@ -63,7 +68,32 @@ const scopedSource = Layer.succeed(ToolSource, {
   tools: [needsCred],
   credentialScopeByTool: new Map([['needsCred', { plugin: 'p', keys: ['declared'] }]]),
 })
-const scopedLayer = ToolRegistry.Live.pipe(Layer.provide(scopedSource), Layer.provide(CredStub))
+const scopedLayer = ToolRegistry.Live.pipe(
+  Layer.provide(scopedSource),
+  Layer.provide(CredStub),
+  Layer.provide(NoConfig),
+)
+
+// A blocked-tier tool must never reach the model (hidden from list + toModelTools).
+const blockedTool: Tool = {
+  name: 'danger',
+  description: 'blocked',
+  riskLevel: 'blocked',
+  parameters: { type: 'object', properties: {} },
+  execute: async () => ({ ok: true }),
+}
+const blockedLayer = ToolRegistry.Live.pipe(
+  Layer.provide(ToolSource.layer([echo, blockedTool])),
+  Layer.provide(CredStub),
+  Layer.provide(NoConfig),
+)
+it.effect('hides blocked tools from the model (list + toModelTools)', () =>
+  Effect.gen(function* () {
+    const reg = yield* ToolRegistry
+    expect(reg.list().map((t) => t.name)).toEqual(['echo'])
+    expect(reg.toModelTools().map((t) => t.function.name)).toEqual(['echo'])
+  }).pipe(Effect.provide(blockedLayer)),
+)
 
 // A tool that reports the platform it received from its execution context.
 const reportsPlatform: Tool = {
@@ -76,6 +106,7 @@ const reportsPlatform: Tool = {
 const platLayer = ToolRegistry.Live.pipe(
   Layer.provide(ToolSource.layer([reportsPlatform])),
   Layer.provide(CredStub),
+  Layer.provide(NoConfig),
 )
 it.effect('passes the current platform into the tool execution context', () =>
   Effect.gen(function* () {

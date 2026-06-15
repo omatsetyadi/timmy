@@ -13,6 +13,11 @@ export function buildSystemPrompt(
     a.language.conversation === 'auto'
       ? '\n\nReply in the same language the user writes in. If they switch, switch with them.'
       : `\n\nReply in ${a.language.conversation}.`
+  // The direct path: cheap, instant, no extra model. Always available.
+  p +=
+    `\n\nYou can run shell commands directly with the runCommand tool — prefer it for quick OS/dev tasks ` +
+    `(checking status, listing files, git, docker). Dangerous commands will ask the user to confirm first. ` +
+    `Use the cheapest capable tool: never reach for a heavier tool to do something a direct command answers.`
   if (reasoningTargets.length > 0) {
     p +=
       `\n\nFor reasoning beyond your own depth you can call the askModel tool to consult a stronger model, ` +
@@ -20,9 +25,9 @@ export function buildSystemPrompt(
   }
   if (claudeAvailable) {
     p +=
-      `\n\nFor tasks you cannot do with your own tools (running bash/docker, preparing a DB, making a ticket PR-ready), ` +
+      `\n\nFor HEAVY, multi-step, code-related work (refactors, building a feature, complex DB/docker setup, making a ticket PR-ready), ` +
       `call the askClaude tool: Claude Code executes the task with its own tools and reports back. ` +
-      `askClaude DOES work; askModel only reasons.`
+      `askClaude DOES work; askModel only reasons. Don't use askClaude for something runCommand can do in one command.`
   }
   return p
 }

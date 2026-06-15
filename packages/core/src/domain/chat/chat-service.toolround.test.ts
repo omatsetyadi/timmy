@@ -105,8 +105,13 @@ it.live(
               ToolRegistry.Live.pipe(
                 Layer.provide(ToolSource.layer([askModelTool])),
                 Layer.provide(CredentialStore.Live),
+                Layer.provide(ConfigStub),
               ),
-              SafeExecution.Live.pipe(Layer.provide(PendingConfirmations.Live)),
+              SafeExecution.Live.pipe(
+                Layer.provide(PendingConfirmations.Live),
+                Layer.provide(ConfigStub),
+                Layer.provide(ToolSource.empty),
+              ),
             ),
           ),
         ),

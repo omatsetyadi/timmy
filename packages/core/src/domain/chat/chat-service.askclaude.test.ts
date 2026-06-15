@@ -122,8 +122,13 @@ it.live('askClaude is gated by confirm, then its result feeds the answer', () =>
             ToolRegistry.Live.pipe(
               Layer.provide(ToolSource.layer([askClaudeTool])),
               Layer.provide(CredentialStore.Live),
+              Layer.provide(ConfigStub),
             ),
-            SafeExecution.Live.pipe(Layer.provideMerge(PendingConfirmations.Live)),
+            SafeExecution.Live.pipe(
+              Layer.provideMerge(PendingConfirmations.Live),
+              Layer.provide(ConfigStub),
+              Layer.provide(ToolSource.empty),
+            ),
           ),
         ),
       ),
@@ -175,8 +180,13 @@ it.live('delivers confirm_required to consumer BEFORE the decision', () => {
             ToolRegistry.Live.pipe(
               Layer.provide(ToolSource.layer([askClaudeTool])),
               Layer.provide(CredentialStore.Live),
+              Layer.provide(ConfigStub),
             ),
-            SafeExecution.Live.pipe(Layer.provideMerge(PendingConfirmations.Live)),
+            SafeExecution.Live.pipe(
+              Layer.provideMerge(PendingConfirmations.Live),
+              Layer.provide(ConfigStub),
+              Layer.provide(ToolSource.empty),
+            ),
           ),
         ),
       ),

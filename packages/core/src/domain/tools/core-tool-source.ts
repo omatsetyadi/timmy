@@ -8,6 +8,7 @@ import { DEFAULT_CLAUDE_MODEL } from '../llm/claude-code-provider'
 import { buildAskModelTool } from '../reasoning/model-router'
 import { buildAskClaudeTool } from '../reasoning/ask-claude'
 import type { StreamChunk } from '../llm/stream-chunk'
+import { buildRunCommandTool } from './run-command-tool'
 import { ToolSource } from './tool-source'
 
 const apiKeyKey = (provider: string) => `model:${provider}:api_key`
@@ -71,6 +72,12 @@ export const CoreToolSource = Layer.effect(
           }),
         ]
       : []
-    return { tools: [askModel, ...askClaudeTool], credentialScopeByTool: new Map() }
+    // The direct terminal tool — the cheap, always-available path (no Claude needed). Its
+    // per-command permission is decided by the classifier + resolver, not the static tier.
+    const runCommand = buildRunCommandTool()
+    return {
+      tools: [askModel, runCommand, ...askClaudeTool],
+      credentialScopeByTool: new Map(),
+    }
   }),
 )

@@ -2,7 +2,13 @@ import { Effect } from 'effect'
 import { mkdirSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
-import { CONFIG_DIR, CONFIG_PATH, readConfigSync } from '../domain/config/config'
+import {
+  CONFIG_DIR,
+  CONFIG_PATH,
+  Permission,
+  PermissionMode,
+  readConfigSync,
+} from '../domain/config/config'
 import { ProviderRegistry } from '../domain/llm/provider-registry'
 import { hasBuiltEntry, installFromGithub, installLocal, listInstalled, remove } from './plugin-cli'
 import {
@@ -18,6 +24,7 @@ import {
   type InitChoices,
 } from './model-cli'
 import { runChat } from './chat-repl'
+import { addAllowedCommand, setMode, setOverride } from './permission-cli'
 import { buildRuntime } from './runtime'
 import { buildServer } from './server'
 
@@ -212,6 +219,64 @@ async function model(args: readonly string[]): Promise<void> {
   }
 }
 
+/** `timmy permission <status|set|mode|allow>` — manage the allow/ask/block permission system. */
+function permission(args: readonly string[]): void {
+  const sub = args[0]
+  const PERMS = Object.values(Permission) as string[]
+  if (sub === 'status') {
+    console.log(JSON.stringify(readConfigSync().permissions, null, 2))
+  } else if (sub === 'mode') {
+    const m = args[1]
+    if (m !== PermissionMode.DEFAULT && m !== PermissionMode.YOLO) {
+      console.error('Usage: timmy permission mode <default|yolo>')
+      process.exit(1)
+    }
+    setMode(m)
+    console.log(`permission mode → ${m}   (restart Timmy to apply)`)
+  } else if (sub === 'set') {
+    const target = args[1]
+    const perm = args[2]
+    if (!target || !perm || !PERMS.includes(perm)) {
+      console.error('Usage: timmy permission set <tool|plugin:NAME> <allow|ask|block>')
+      process.exit(1)
+    }
+    if (target.startsWith('plugin:')) {
+      setOverride('plugin', target.slice('plugin:'.length), perm as Permission)
+    } else {
+      setOverride('tool', target, perm as Permission)
+    }
+    console.log(`permission ${target} → ${perm}   (restart Timmy to apply)`)
+  } else if (sub === 'allow') {
+    const cmd = args.slice(1).join(' ').trim()
+    if (!cmd) {
+      console.error('Usage: timmy permission allow <command>')
+      process.exit(1)
+    }
+    addAllowedCommand(cmd)
+    console.log(`allowlisted command → "${cmd}"   (restart Timmy to apply)`)
+  } else {
+    console.error(
+      'Usage: timmy permission <status | set <tool|plugin:NAME> <allow|ask|block> | mode <default|yolo> | allow <command>>',
+    )
+    process.exit(1)
+  }
+}
+
+/** `timmy yolo <on|off>` — friendly alias for `permission mode default|yolo`. */
+function yolo(args: readonly string[]): void {
+  const v = args[0]
+  if (v !== 'on' && v !== 'off') {
+    console.error('Usage: timmy yolo <on|off>')
+    process.exit(1)
+  }
+  setMode(v === 'on' ? PermissionMode.YOLO : PermissionMode.DEFAULT)
+  console.log(
+    v === 'on'
+      ? 'YOLO ON — risky commands auto-run with no confirm (blocked tools stay blocked)   (restart Timmy)'
+      : 'YOLO OFF — normal mode (Timmy asks before risky actions)   (restart Timmy)',
+  )
+}
+
 /** `timmy chat [--thread <id>]` — interactive terminal chat with the running daemon. */
 async function chat(args: readonly string[]): Promise<void> {
   const i = args.indexOf('--thread')
@@ -319,6 +384,13 @@ Models (cloud + local LLM providers):
   model list                         Alias of \`model status\`
   model refresh                      Re-run model auto-discovery
 
+Permissions (allow / ask / block — safe runs, risky asks, blocked is off):
+  permission status                  Show the current permission posture
+  permission set <tool|plugin:NAME> <allow|ask|block>   Override a tool or plugin
+  permission mode <default|yolo>     default = ask on risky; yolo = auto-run risky
+  permission allow <command>         Allowlist a shell command for runCommand (auto-run)
+  yolo <on|off>                      Alias for \`permission mode yolo|default\`
+
   Note: askClaude (agentic Claude Code) needs the \`claude\` CLI installed + logged in
   (\`claude auth status\`; \`model status\` shows availability + auto-mode state).
 
@@ -333,6 +405,8 @@ export function run(): void {
   else if (cmd === 'status') void status()
   else if (cmd === 'plugin') plugin(process.argv.slice(3))
   else if (cmd === 'model') void model(process.argv.slice(3))
+  else if (cmd === 'permission') permission(process.argv.slice(3))
+  else if (cmd === 'yolo') yolo(process.argv.slice(3))
   else if (cmd === 'version' || cmd === '--version' || cmd === '-v')
     console.log(`Timmy v${VERSION}`)
   else if (cmd === 'help' || cmd === '--help' || cmd === '-h' || cmd === undefined) printHelp()

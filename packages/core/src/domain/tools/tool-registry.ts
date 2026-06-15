@@ -1,7 +1,9 @@
 import { Context, Effect, Layer } from 'effect'
 import { Platform, type Tool, type ToolContext, type ToolResult } from 'timmy-sdk'
 import { CredentialStore } from '../credentials/credential-store'
+import { Config } from '../config/config'
 import { ToolError, ToolNotFoundError } from './errors'
+import { isBlocked } from './permission-resolver'
 import { ToolSource } from './tool-source'
 
 /** Node's `process.platform` → the SDK's `Platform`, so tools can branch on the OS without
@@ -36,6 +38,7 @@ export class ToolRegistry extends Context.Tag('timmy/tools/registry')<
     Effect.gen(function* () {
       const { tools, credentialScopeByTool } = yield* ToolSource
       const credStore = yield* CredentialStore
+      const cfg = yield* (yield* Config).get
       const platform = currentPlatform()
 
       // Register each tool alongside a credentials object scoped to its owning plugin's
@@ -48,6 +51,12 @@ export class ToolRegistry extends Context.Tag('timmy/tools/registry')<
           continue
         }
         const scope = credentialScopeByTool.get(tool.name)
+        // A blocked tool (declared `blocked`, or a user `block` override) is the user opting
+        // out of that capability — hide it from the model entirely rather than offer-then-refuse.
+        if (isBlocked(tool.name, tool.riskLevel, scope?.plugin, cfg.permissions)) {
+          yield* Effect.logDebug(`tool '${tool.name}' blocked by config — hidden`)
+          continue
+        }
         const allowed = new Set(scope?.keys ?? [])
         // Least-privilege: resolve only keys the owning plugin declared, under the
         // keychain convention `<pluginName>:<key>`. Undeclared keys (and tools with no

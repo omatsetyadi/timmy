@@ -79,3 +79,26 @@ providers:
     expect(cfg.providers?.claude_code.bypass_permissions).toBe(true)
   })
 })
+
+describe('permissions config', () => {
+  it('defaults to { mode: default } when absent', () => {
+    const path = writeCfg(`models:\n  frontdesk: { provider: ollama, model: qwen3:14b }\n`)
+    expect(readConfigSync(path).permissions).toEqual({ mode: 'default' })
+  })
+
+  it('parses mode, plugin/tool overrides, and the command allowlist', () => {
+    const path = writeCfg(`
+permissions:
+  mode: yolo
+  plugins: { machine: ask }
+  tools: { machine__deleteFile: block, runCommand: ask }
+  commands:
+    allow: [npm install, git commit]
+`)
+    const p = readConfigSync(path).permissions
+    expect(p.mode).toBe('yolo')
+    expect(p.plugins?.machine).toBe('ask')
+    expect(p.tools?.machine__deleteFile).toBe('block')
+    expect(p.commands?.allow).toEqual(['npm install', 'git commit'])
+  })
+})

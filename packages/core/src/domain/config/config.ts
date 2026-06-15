@@ -29,10 +29,31 @@ export interface ProviderConfig {
 export interface ReasoningConfig {
   default?: string // "<provider>/<model>"
 }
+
+/** The permission decision for a tool call — the universal allow/ask/block triad. */
+export const Permission = { ALLOW: 'allow', ASK: 'ask', BLOCK: 'block' } as const
+export type Permission = (typeof Permission)[keyof typeof Permission]
+
+/** Global friction posture: `default` respects each tool's decision (mostly open, ask on
+ *  risky); `yolo` auto-allows everything except `block` (like Claude's auto mode). */
+export const PermissionMode = { DEFAULT: 'default', YOLO: 'yolo' } as const
+export type PermissionMode = (typeof PermissionMode)[keyof typeof PermissionMode]
+
+export interface PermissionConfig {
+  mode: PermissionMode
+  /** Per-plugin overrides, keyed by plugin name. */
+  plugins?: Record<string, Permission>
+  /** Per-tool overrides, keyed by the namespaced tool name (`<plugin>__<tool>`) or a bare core name. */
+  tools?: Record<string, Permission>
+  /** runCommand's personal allowlist — shell commands the user has chosen to always allow. */
+  commands?: { allow?: string[] }
+}
+
 export interface TimmyConfig {
   server: { host: string; port: number; auth: { enabled: boolean; token: 'keychain' | string } }
   models: { frontdesk: FrontdeskConfig; reasoning?: ReasoningConfig }
   providers?: Record<string, ProviderConfig>
+  permissions: PermissionConfig
   assistant: AssistantConfig
 }
 
@@ -48,6 +69,7 @@ const DEFAULTS: TimmyConfig = {
   models: {
     frontdesk: { provider: 'ollama', base_url: 'http://localhost:11434', model: 'qwen3:14b' },
   },
+  permissions: { mode: 'default' },
   assistant: {
     name: 'Timmy',
     personality: DEFAULT_PERSONALITY,
@@ -71,6 +93,7 @@ function loadConfig(path: string): TimmyConfig {
       ...(f.models?.reasoning ? { reasoning: f.models.reasoning } : {}),
     },
     ...(f.providers ? { providers: f.providers } : {}),
+    permissions: { ...DEFAULTS.permissions, ...f.permissions },
     assistant: {
       ...DEFAULTS.assistant,
       ...f.assistant,

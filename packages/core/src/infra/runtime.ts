@@ -95,11 +95,12 @@ export function buildRuntime() {
     PluginToolSource,
   )
 
-  const mid = Layer.mergeAll(
-    ThreadStore.Live,
-    SafeExecution.Live,
-    ToolRegistry.Live.pipe(Layer.provide(toolSource)),
-  ).pipe(Layer.provideMerge(llmLayer))
+  // Both the registry (to hide blocked tools) and SafeExecution (to resolve a tool's owning
+  // plugin for permission overrides) now read the ToolSource, so provide it to the whole tier.
+  const mid = Layer.mergeAll(ThreadStore.Live, SafeExecution.Live, ToolRegistry.Live).pipe(
+    Layer.provide(toolSource),
+    Layer.provideMerge(llmLayer),
+  )
 
   const AppLayer = ChatService.Live.pipe(Layer.provideMerge(mid))
 

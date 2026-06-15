@@ -41,6 +41,12 @@ describe('buildSystemPrompt reasoning pool', () => {
   })
 })
 
+it('always offers the direct runCommand path and routes by cost', () => {
+  const p = buildSystemPrompt(cfg, [])
+  expect(p).toMatch(/runCommand/)
+  expect(p).toMatch(/cheapest|direct/i)
+})
+
 it('mentions askClaude as the agentic doer when claudeAvailable', () => {
   const p = buildSystemPrompt(cfg, [], true)
   expect(p).toMatch(/askClaude/)
