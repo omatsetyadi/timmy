@@ -17,6 +17,7 @@ import {
   writeInitConfig,
   type InitChoices,
 } from './model-cli'
+import { runChat } from './chat-repl'
 import { buildRuntime } from './runtime'
 import { buildServer } from './server'
 
@@ -211,6 +212,13 @@ async function model(args: readonly string[]): Promise<void> {
   }
 }
 
+/** `timmy chat [--thread <id>]` — interactive terminal chat with the running daemon. */
+async function chat(args: readonly string[]): Promise<void> {
+  const i = args.indexOf('--thread')
+  const threadArg = i >= 0 ? args[i + 1] : undefined
+  await runChat({ threadArg })
+}
+
 /** `timmy init` — first-run setup (NOT daemon/PM2): detect env, pick a frontdesk, write config. */
 async function init(): Promise<void> {
   const { runtime } = buildRuntime()
@@ -291,6 +299,7 @@ Usage: timmy <command> [args]
 Core:
   init                               First-run setup wizard — detect env + write ~/.timmy/config.yaml
   start                              Start the Timmy daemon (HTTP + WebSocket server)
+  chat [--thread <id>]               Interactive terminal chat with the running daemon
   status                             Check whether the running daemon is reachable
   help, --help, -h                   Show this help
   version, --version, -v             Print the version
@@ -320,6 +329,7 @@ export function run(): void {
   const cmd = process.argv[2]
   if (cmd === 'start') void start()
   else if (cmd === 'init') void init()
+  else if (cmd === 'chat') void chat(process.argv.slice(3))
   else if (cmd === 'status') void status()
   else if (cmd === 'plugin') plugin(process.argv.slice(3))
   else if (cmd === 'model') void model(process.argv.slice(3))
