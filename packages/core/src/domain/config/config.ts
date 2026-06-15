@@ -86,6 +86,14 @@ export function readConfigSync(path: string = CONFIG_PATH): TimmyConfig {
   return loadConfig(path)
 }
 
+/** Providers as Timmy effectively sees them. **Ollama is an implicit local default** — it's
+ *  Timmy's local-first LLM, so it's always part of the provider set (auto-discovered at
+ *  localhost:11434) even without a `providers.ollama` entry. A declared `ollama` (e.g. a custom
+ *  base_url) overrides the implicit default. */
+export function effectiveProviders(cfg: TimmyConfig): Record<string, ProviderConfig> {
+  return { ollama: { kind: 'ollama' }, ...(cfg.providers ?? {}) }
+}
+
 export class Config extends Context.Tag('timmy/config/config')<
   Config,
   { readonly get: Effect.Effect<TimmyConfig> }

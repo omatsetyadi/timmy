@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Ref } from 'effect'
-import { Config, type ProviderConfig } from '../config/config'
+import { Config, effectiveProviders, type ProviderConfig } from '../config/config'
 import { CredentialStore } from '../credentials/credential-store'
 import { resolveBaseUrl } from './known-providers'
 
@@ -54,7 +54,7 @@ export class ProviderRegistry extends Context.Tag('timmy/llm/provider-registry')
     Effect.gen(function* () {
       const cfg = yield* (yield* Config).get
       const creds = yield* CredentialStore
-      const providers = cfg.providers ?? {}
+      const providers = effectiveProviders(cfg) // includes the implicit Ollama default
 
       const discoverAll = Effect.gen(function* () {
         const out: DiscoveredTarget[] = []

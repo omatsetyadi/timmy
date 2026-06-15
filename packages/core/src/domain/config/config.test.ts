@@ -4,7 +4,7 @@ import { describe, expect } from 'vitest'
 import { writeFileSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Config, readConfigSync } from './config'
+import { Config, readConfigSync, effectiveProviders } from './config'
 
 it.effect('uses defaults when no file exists', () =>
   Effect.gen(function* () {
@@ -57,6 +57,16 @@ providers:
     expect(cfg.providers).toBeUndefined()
     expect(cfg.models.reasoning).toBeUndefined()
     expect(cfg.models.frontdesk.model).toBe('qwen3:14b')
+  })
+
+  it('effectiveProviders adds an implicit ollama default; a declared ollama overrides it', () => {
+    const noProviders = writeCfg(`models:\n  frontdesk: { provider: deepseek, model: x }\n`)
+    expect(effectiveProviders(readConfigSync(noProviders)).ollama).toEqual({ kind: 'ollama' })
+
+    const declared = writeCfg(
+      `providers:\n  ollama: { kind: ollama, base_url: http://remote:11434 }\n`,
+    )
+    expect(effectiveProviders(readConfigSync(declared)).ollama.base_url).toBe('http://remote:11434')
   })
 
   it('parses claude_code model + bypass_permissions ("auto mode") toggle', () => {

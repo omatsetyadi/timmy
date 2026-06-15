@@ -1,7 +1,7 @@
 import { Effect } from 'effect'
 import { load, dump } from 'js-yaml'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { Config, CONFIG_PATH } from '../domain/config/config'
+import { Config, CONFIG_PATH, effectiveProviders } from '../domain/config/config'
 import { CredentialStore } from '../domain/credentials/credential-store'
 import { ProviderRegistry } from '../domain/llm/provider-registry'
 import { DEFAULT_CLAUDE_MODEL, KNOWN_CLAUDE_MODELS } from '../domain/llm/claude-code-provider'
@@ -108,7 +108,8 @@ export const statusReport = Effect.gen(function* () {
   const cfg = yield* (yield* Config).get
   const creds = yield* CredentialStore
   const pool = yield* (yield* ProviderRegistry).pool
-  const providers = Object.entries(cfg.providers ?? {})
+  const declared = cfg.providers ?? {}
+  const providers = Object.entries(effectiveProviders(cfg)) // includes implicit Ollama default
   const rows: StatusReport['providers'] = []
   for (const [key, pc] of providers) {
     if (pc.kind === 'claude-code') {
@@ -126,13 +127,12 @@ export const statusReport = Effect.gen(function* () {
       })
       continue
     }
+    const models = pool.filter((t) => t.providerKey === key).map((t) => t.model)
+    // Hide the implicit Ollama default when it isn't running (no models) and wasn't declared,
+    // so cloud-only setups don't see an empty Ollama row. A declared provider always shows.
+    if (!(key in declared) && models.length === 0) continue
     const hasKey = pc.kind === 'openai-compat' ? (yield* creds.get(apiKeyKey(key))) !== null : true
-    rows.push({
-      key,
-      kind: pc.kind,
-      hasKey,
-      models: pool.filter((t) => t.providerKey === key).map((t) => t.model),
-    })
+    rows.push({ key, kind: pc.kind, hasKey, models })
   }
   return {
     frontdesk: { provider: cfg.models.frontdesk.provider, model: cfg.models.frontdesk.model },
@@ -140,3 +140,42 @@ export const statusReport = Effect.gen(function* () {
     providers: rows,
   } satisfies StatusReport
 })
+
+// ── timmy init (first-run setup — unrelated to PM2/daemon lifecycle) ─────────────
+
+export interface InitChoices {
+  frontdesk: { provider: string; model: string }
+  claudeAuthed: boolean
+  /** a cloud provider set up during init (e.g. 'deepseek'); added to the providers block. */
+  cloudProvider?: string
+}
+
+/** Detect the local environment for `timmy init`: reachable Ollama models + Claude Code auth.
+ *  Needs no services (fetch + `claude auth status`), so it runs before any config exists. */
+export const detectEnv = Effect.gen(function* () {
+  const ollamaModels = yield* Effect.tryPromise(() =>
+    fetch('http://localhost:11434/api/tags').then(
+      (r) => r.json() as Promise<{ models?: { name: string }[] }>,
+    ),
+  ).pipe(
+    Effect.map((d) => (d.models ?? []).map((m) => m.name)),
+    Effect.catchAll(() => Effect.succeed([] as string[])),
+  )
+  const claudeAuthed = yield* claudeCodeAvailable
+  return { ollamaModels, claudeAuthed }
+})
+
+/** Pure: the config object `timmy init` writes. Ollama is implicit (effectiveProviders) so it
+ *  isn't written; claude_code is added when logged in; a chosen cloud provider is added with its
+ *  base_url auto-resolved (known providers) — its API key is stored separately in the keychain. */
+export const buildInitConfig = (c: InitChoices): RawConfig => {
+  const providers: Record<string, Record<string, unknown>> = {}
+  if (c.claudeAuthed) providers.claude_code = { kind: 'claude-code' }
+  if (c.cloudProvider) providers[c.cloudProvider] = { kind: 'openai-compat' }
+  const raw: RawConfig = { models: { frontdesk: c.frontdesk } }
+  if (Object.keys(providers).length > 0) raw.providers = providers
+  return raw
+}
+
+/** Write the init config to `~/.timmy/config.yaml`. */
+export const writeInitConfig = (c: InitChoices): void => saveRaw(buildInitConfig(c))

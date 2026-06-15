@@ -1,8 +1,8 @@
 import { Effect } from 'effect'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
-import { CONFIG_DIR, readConfigSync } from '../domain/config/config'
+import { CONFIG_DIR, CONFIG_PATH, readConfigSync } from '../domain/config/config'
 import { ProviderRegistry } from '../domain/llm/provider-registry'
 import { hasBuiltEntry, installFromGithub, installLocal, listInstalled, remove } from './plugin-cli'
 import {
@@ -13,6 +13,9 @@ import {
   setAskClaudeModel,
   setAskClaudeBypass,
   discoveredTargetIds,
+  detectEnv,
+  writeInitConfig,
+  type InitChoices,
 } from './model-cli'
 import { buildRuntime } from './runtime'
 import { buildServer } from './server'
@@ -155,12 +158,12 @@ async function model(args: readonly string[]): Promise<void> {
       }
       const slash = target.indexOf('/')
       setFrontdeskConfig(target.slice(0, slash), target.slice(slash + 1))
-      console.log(`frontdesk → ${target}   (restart \`timmy start\` to apply)`)
+      console.log(`frontdesk → ${target}   (restart Timmy to apply)`)
     } else if (sub === 'reasoning') {
       const target = args[1]
       if (target === '--clear') {
         setReasoningConfig(null)
-        console.log('reasoning default cleared   (restart `timmy start` to apply)')
+        console.log('reasoning default cleared   (restart Timmy to apply)')
       } else if (!target || !target.includes('/')) {
         console.error('Usage: timmy model reasoning <provider>/<model> | --clear')
         process.exit(1)
@@ -173,7 +176,7 @@ async function model(args: readonly string[]): Promise<void> {
           process.exit(1)
         }
         setReasoningConfig(target)
-        console.log(`reasoning default → ${target}   (restart \`timmy start\` to apply)`)
+        console.log(`reasoning default → ${target}   (restart Timmy to apply)`)
       }
     } else if (sub === 'askclaude') {
       const claudeModel = args[1]
@@ -183,7 +186,7 @@ async function model(args: readonly string[]): Promise<void> {
       }
       setAskClaudeModel(claudeModel)
       console.log(
-        `askClaude model → ${claudeModel}   (restart \`timmy start\`; needs Claude Code installed + logged in)`,
+        `askClaude model → ${claudeModel}   (restart Timmy; needs Claude Code installed + logged in)`,
       )
     } else if (sub === 'auto') {
       const v = args[1]
@@ -194,8 +197,8 @@ async function model(args: readonly string[]): Promise<void> {
       setAskClaudeBypass(v === 'on')
       console.log(
         v === 'on'
-          ? 'askClaude auto-mode ON — Claude Code may use ANY tool, no allowlist   (restart `timmy start`)'
-          : 'askClaude auto-mode OFF — scoped allowlist (Read/Glob/Grep/Bash/Edit/Write)   (restart `timmy start`)',
+          ? 'askClaude auto-mode ON — Claude Code may use ANY tool, no allowlist   (restart Timmy)'
+          : 'askClaude auto-mode OFF — scoped allowlist (Read/Glob/Grep/Bash/Edit/Write)   (restart Timmy)',
       )
     } else {
       console.error(
@@ -208,12 +211,85 @@ async function model(args: readonly string[]): Promise<void> {
   }
 }
 
+/** `timmy init` — first-run setup (NOT daemon/PM2): detect env, pick a frontdesk, write config. */
+async function init(): Promise<void> {
+  const { runtime } = buildRuntime()
+  const rl = createInterface({ input: process.stdin, output: process.stdout })
+  const ask = (q: string): Promise<string> =>
+    new Promise((res) => rl.question(q, (a) => res(a.trim())))
+  try {
+    if (existsSync(CONFIG_PATH)) {
+      const ow = await ask('~/.timmy/config.yaml already exists. Overwrite? (y/N) ')
+      if (ow.toLowerCase() !== 'y') {
+        console.log('aborted — config unchanged')
+        return
+      }
+    }
+    console.log('Detecting environment…')
+    const env = await runtime.runPromise(detectEnv)
+    console.log(
+      `  Ollama:      ${env.ollamaModels.length ? env.ollamaModels.join(', ') : 'not reachable on localhost:11434'}`,
+    )
+    console.log(
+      `  Claude Code: ${env.claudeAuthed ? 'logged in (askClaude available)' : 'not detected'}`,
+    )
+
+    const options = env.ollamaModels.map((m) => `ollama/${m}`)
+    console.log('\nPick a frontdesk model:')
+    options.forEach((o, i) => console.log(`  [${i + 1}] ${o}`))
+    console.log(`  [c]  a cloud model (I'll ask for an API key)`)
+    const pick = await ask('Choose: ')
+
+    let choices: InitChoices
+    if (pick.toLowerCase() === 'c' || options.length === 0) {
+      const provider = (
+        await ask('  Cloud provider (deepseek/openai/anthropic/gemini): ')
+      ).toLowerCase()
+      const model = provider && (await ask(`  Model id for ${provider} (e.g. deepseek-v4-flash): `))
+      if (!provider || !model) {
+        console.error('aborted — provider and model are required')
+        process.exit(1)
+      }
+      const key = await ask(`  Paste the ${provider} API key (Enter to skip for now): `)
+      if (key) await runtime.runPromise(setKey(provider, key))
+      choices = {
+        frontdesk: { provider, model },
+        claudeAuthed: env.claudeAuthed,
+        cloudProvider: provider,
+      }
+    } else {
+      const sel = options[Number(pick) - 1]
+      if (!sel) {
+        console.error('invalid choice')
+        process.exit(1)
+      }
+      const slash = sel.indexOf('/')
+      choices = {
+        frontdesk: { provider: sel.slice(0, slash), model: sel.slice(slash + 1) },
+        claudeAuthed: env.claudeAuthed,
+      }
+    }
+    writeInitConfig(choices)
+    console.log(
+      `\n✓ wrote ~/.timmy/config.yaml — frontdesk ${choices.frontdesk.provider}/${choices.frontdesk.model}` +
+        (env.claudeAuthed ? ' · claude_code enabled (askClaude)' : ''),
+    )
+    console.log(
+      '  Next: `timmy start`  ·  `timmy model status`  ·  add keys: `timmy model set-key <provider>`',
+    )
+  } finally {
+    rl.close()
+    await runtime.dispose()
+  }
+}
+
 function printHelp(): void {
   console.log(`Timmy v${VERSION} — local-first personal AI assistant
 
 Usage: timmy <command> [args]
 
 Core:
+  init                               First-run setup wizard — detect env + write ~/.timmy/config.yaml
   start                              Start the Timmy daemon (HTTP + WebSocket server)
   status                             Check whether the running daemon is reachable
   help, --help, -h                   Show this help
@@ -243,6 +319,7 @@ Config: ~/.timmy/config.yaml   ·   Plugins: ~/.timmy/plugins/`)
 export function run(): void {
   const cmd = process.argv[2]
   if (cmd === 'start') void start()
+  else if (cmd === 'init') void init()
   else if (cmd === 'status') void status()
   else if (cmd === 'plugin') plugin(process.argv.slice(3))
   else if (cmd === 'model') void model(process.argv.slice(3))

@@ -1,5 +1,5 @@
 import { Effect, Layer, Stream } from 'effect'
-import { Config, type ProviderConfig } from '../config/config'
+import { Config, effectiveProviders, type ProviderConfig } from '../config/config'
 import { CredentialStore } from '../credentials/credential-store'
 import { ProviderRegistry } from '../llm/provider-registry'
 import { makeProvider, type ProviderTarget } from '../llm/provider'
@@ -22,7 +22,7 @@ export const CoreToolSource = Layer.effect(
     const cfg = yield* (yield* Config).get
     const creds = yield* CredentialStore
     const registry = yield* ProviderRegistry
-    const providers: Record<string, ProviderConfig> = cfg.providers ?? {}
+    const providers: Record<string, ProviderConfig> = effectiveProviders(cfg) // implicit Ollama default
     const pool = yield* registry.pool
 
     const resolveTarget = (id: string): ProviderTarget | null => {
