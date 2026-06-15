@@ -53,21 +53,61 @@ export function hasBuiltEntry(src: string): boolean {
   return existsSync(join(src, 'dist', 'index.js')) || existsSync(join(src, 'index.js'))
 }
 
-/** Parse a `github:user/repo[#ref]` spec (tolerates a trailing `.git`). Throws on a
- *  malformed spec. Exported for testing the parse without performing any I/O. */
-export function parseGithubSpec(spec: string): { user: string; repo: string; ref?: string } {
-  const m = /^github:([^/\s]+)\/([^#\s]+?)(?:\.git)?(?:#(.+))?$/.exec(spec)
-  if (!m) throw new Error(`invalid github spec '${spec}' — expected github:user/repo`)
-  return { user: m[1]!, repo: m[2]!, ref: m[3] }
+/** Recognize any supported GitHub source: the `github:` shorthand, an https/http GitHub URL
+ *  (optionally `www.`), or a `git@github.com:` SSH URL. Local paths + other hosts → false.
+ *  Used by the CLI to route a source to {@link installFromGithub} vs a local install. */
+export function isGithubSource(src: string): boolean {
+  return (
+    src.startsWith('github:') ||
+    /^git@github\.com:/i.test(src) ||
+    /^https?:\/\/(?:www\.)?github\.com\//i.test(src)
+  )
 }
 
-/** Install a plugin from a `github:user/repo[#ref]` spec: shallow-clone the repo,
- *  `npm install` + `npm run build` (which resolves the published deps and produces the
- *  self-contained bundle), then copy the built plugin into `<pluginsDir>/<repo>/`.
+/** Parse any GitHub source into `{ user, repo, ref? }`. Accepts (all tolerate a trailing `.git`):
+ *  - `github:user/repo[#ref]` (shorthand)
+ *  - `https://github.com/user/repo[.git][/]` (also `http`/`www.`); branch as `#ref` or `/tree/<ref>`
+ *  - `git@github.com:user/repo[.git]`
+ *  No I/O — exported for testing the parse. Throws on anything that isn't a GitHub source. */
+export function parseGithubSource(src: string): { user: string; repo: string; ref?: string } {
+  const fail = () =>
+    new Error(
+      `invalid GitHub source '${src}' — expected github:user/repo or https://github.com/user/repo`,
+    )
+  let s = src.trim()
+  let ref: string | undefined
+  const hash = s.indexOf('#')
+  if (hash !== -1) {
+    ref = s.slice(hash + 1) || undefined
+    s = s.slice(0, hash)
+  }
+  let path: string
+  if (s.startsWith('github:')) path = s.slice('github:'.length)
+  else if (/^git@github\.com:/i.test(s)) path = s.slice(s.indexOf(':') + 1)
+  else {
+    const url = /^https?:\/\/(?:www\.)?github\.com\/(.+)$/i.exec(s)
+    if (!url) throw fail()
+    path = url[1]!
+  }
+  path = path.replace(/\/+$/, '') // tolerate a trailing slash
+  const tree = /^(.+?)\/tree\/(.+)$/.exec(path) // a web URL may carry the branch as /tree/<ref>
+  if (tree) {
+    path = tree[1]!
+    ref = ref ?? tree[2]
+  }
+  const m = /^([^/\s]+)\/([^/\s]+?)(?:\.git)?$/.exec(path)
+  if (!m) throw fail()
+  return { user: m[1]!, repo: m[2]!, ref }
+}
+
+/** Install a plugin from any GitHub source (see {@link parseGithubSource}): shallow-clone the
+ *  repo, `npm install` + `npm run build` (which resolves the published deps and produces the
+ *  self-contained bundle), then copy the built plugin into `<pluginsDir>/<repo>/`. Always clones
+ *  over https (re-derived from user/repo), so an `git@` source still resolves for a public repo.
  *  Uses `npm` (not pnpm) for the at-target build so it's independent of any pnpm
  *  workspace config / release-age cooldown. Returns the installed name (`repo`). */
-export function installFromGithub(spec: string, pluginsDir: string): string {
-  const { user, repo, ref } = parseGithubSpec(spec)
+export function installFromGithub(source: string, pluginsDir: string): string {
+  const { user, repo, ref } = parseGithubSource(source)
   const url = `https://github.com/${user}/${repo}.git`
   const tmp = mkdtempSync(join(tmpdir(), 'timmy-plugin-'))
   try {
@@ -81,7 +121,7 @@ export function installFromGithub(spec: string, pluginsDir: string): string {
     execFileSync('npm', ['run', 'build'], { cwd: tmp, stdio: 'inherit' })
     if (!hasBuiltEntry(tmp)) {
       throw new Error(
-        `'${spec}' produced no dist/index.js — its build script must build the plugin`,
+        `'${source}' produced no dist/index.js — its build script must build the plugin`,
       )
     }
     const dest = join(pluginsDir, repo)

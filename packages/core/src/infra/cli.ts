@@ -10,7 +10,14 @@ import {
   readConfigSync,
 } from '../domain/config/config'
 import { ProviderRegistry } from '../domain/llm/provider-registry'
-import { hasBuiltEntry, installFromGithub, installLocal, listInstalled, remove } from './plugin-cli'
+import {
+  hasBuiltEntry,
+  installFromGithub,
+  installLocal,
+  isGithubSource,
+  listInstalled,
+  remove,
+} from './plugin-cli'
 import {
   setKey,
   setSearchKey,
@@ -72,22 +79,25 @@ function plugin(args: readonly string[]): void {
   if (sub === 'install') {
     const src = args[1]
     if (src === undefined) {
-      console.error('Usage: timmy plugin install <path>')
+      console.error('Usage: timmy plugin install <path|github:user/repo|github-url>')
       process.exit(1)
     }
     mkdirSync(pluginsDir, { recursive: true })
-    // github:user/repo → clone + `npm install` + build at the target (resolving the
+    // Any GitHub source (github:user/repo shorthand, https://github.com/... URL, or
+    // git@github.com: SSH) → clone + `npm install` + build at the target (resolving the
     // published deps), then install the built bundle.
-    if (src.startsWith('github:')) {
+    if (isGithubSource(src)) {
       const name = installFromGithub(src, pluginsDir)
       console.log(`installed '${name}' from ${src} → ${join(pluginsDir, name)}`)
       return
     }
-    // Any OTHER scheme (https:, npm:, file:, …) is unsupported. RFC-3986 scheme shape:
-    // a letter then 1+ scheme chars (the `+` requires length ≥2), so it catches schemes
+    // Any OTHER scheme (npm:, file:, a non-GitHub git host, …) is unsupported. RFC-3986 scheme
+    // shape: a letter then 1+ scheme chars (the `+` requires length ≥2), so it catches schemes
     // while letting Windows drive letters (C:\…) through as local paths.
     if (/^[a-z][a-z0-9+.-]+:/i.test(src)) {
-      console.error(`'${src}' — only a local path or github:user/repo is supported`)
+      console.error(
+        `'${src}' — only a local path or a GitHub repo (github:user/repo or a github.com URL) is supported`,
+      )
       process.exit(1)
     }
     if (!hasBuiltEntry(src)) {
@@ -418,7 +428,7 @@ Core:
   version, --version, -v             Print the version
 
 Plugins:
-  plugin install <path|github:user/repo>   Install a plugin (local dir or GitHub repo)
+  plugin install <path|github-url>         Install a plugin (local dir, github:user/repo, or a github.com URL)
   plugin list                        List installed plugins
   plugin remove <name>               Remove an installed plugin
 

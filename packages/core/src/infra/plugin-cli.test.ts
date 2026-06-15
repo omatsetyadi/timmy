@@ -2,7 +2,14 @@ import { describe, it, expect } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { hasBuiltEntry, installLocal, listInstalled, parseGithubSpec, remove } from './plugin-cli'
+import {
+  hasBuiltEntry,
+  installLocal,
+  isGithubSource,
+  listInstalled,
+  parseGithubSource,
+  remove,
+} from './plugin-cli'
 
 /** Build a fake "built" plugin source dir: `<root>/<name>/dist/index.js` + `package.json`.
  *  Returns the plugin source dir path. */
@@ -121,29 +128,62 @@ describe('hasBuiltEntry', () => {
   })
 })
 
-describe('parseGithubSpec', () => {
-  it('parses github:user/repo', () => {
-    expect(parseGithubSpec('github:omatsetyadi/timmy-plugin-machine')).toEqual({
+describe('parseGithubSource', () => {
+  it('parses the github:user/repo shorthand', () => {
+    expect(parseGithubSource('github:omatsetyadi/timmy-plugin-machine')).toEqual({
       user: 'omatsetyadi',
       repo: 'timmy-plugin-machine',
       ref: undefined,
     })
   })
 
-  it('parses an optional #ref', () => {
-    expect(parseGithubSpec('github:user/repo#v1.2.0')).toEqual({
-      user: 'user',
+  it('parses an optional #ref and strips a trailing .git', () => {
+    expect(parseGithubSource('github:user/repo#v1.2.0')).toMatchObject({
       repo: 'repo',
       ref: 'v1.2.0',
     })
+    expect(parseGithubSource('github:user/repo.git')).toMatchObject({ repo: 'repo' })
   })
 
-  it('strips a trailing .git', () => {
-    expect(parseGithubSpec('github:user/repo.git')).toMatchObject({ repo: 'repo' })
+  it('parses a full https GitHub URL (with .git / trailing slash / www / http)', () => {
+    expect(parseGithubSource('https://github.com/user/repo')).toMatchObject({
+      user: 'user',
+      repo: 'repo',
+    })
+    expect(parseGithubSource('https://github.com/user/repo.git')).toMatchObject({ repo: 'repo' })
+    expect(parseGithubSource('https://github.com/user/repo/')).toMatchObject({ repo: 'repo' })
+    expect(parseGithubSource('http://www.github.com/user/repo')).toMatchObject({ repo: 'repo' })
   })
 
-  it('throws on a malformed spec', () => {
-    expect(() => parseGithubSpec('not-a-github-spec')).toThrow(/invalid github spec/)
-    expect(() => parseGithubSpec('github:no-slash')).toThrow(/invalid github spec/)
+  it('parses a branch from /tree/<ref> or #ref on a URL', () => {
+    expect(parseGithubSource('https://github.com/user/repo/tree/dev')).toMatchObject({
+      repo: 'repo',
+      ref: 'dev',
+    })
+    expect(parseGithubSource('https://github.com/user/repo#v2')).toMatchObject({ ref: 'v2' })
+  })
+
+  it('parses an ssh git@ URL', () => {
+    expect(parseGithubSource('git@github.com:user/repo.git')).toMatchObject({
+      user: 'user',
+      repo: 'repo',
+    })
+  })
+
+  it('throws on a non-GitHub source', () => {
+    expect(() => parseGithubSource('not-a-source')).toThrow(/GitHub source/)
+    expect(() => parseGithubSource('https://gitlab.com/u/r')).toThrow(/GitHub source/)
+  })
+})
+
+describe('isGithubSource', () => {
+  it('recognizes every GitHub form and rejects local paths / other hosts', () => {
+    expect(isGithubSource('github:u/r')).toBe(true)
+    expect(isGithubSource('https://github.com/u/r')).toBe(true)
+    expect(isGithubSource('http://www.github.com/u/r')).toBe(true)
+    expect(isGithubSource('git@github.com:u/r.git')).toBe(true)
+    expect(isGithubSource('./local/plugin')).toBe(false)
+    expect(isGithubSource('/abs/path')).toBe(false)
+    expect(isGithubSource('https://gitlab.com/u/r')).toBe(false)
   })
 })
