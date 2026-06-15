@@ -13,6 +13,7 @@ import { ProviderRegistry } from '../domain/llm/provider-registry'
 import { hasBuiltEntry, installFromGithub, installLocal, listInstalled, remove } from './plugin-cli'
 import {
   setKey,
+  setSearchKey,
   statusReport,
   setFrontdeskConfig,
   setReasoningConfig,
@@ -219,6 +220,30 @@ async function model(args: readonly string[]): Promise<void> {
   }
 }
 
+/** `timmy search set-key <provider>` — store a web-search provider key (e.g. tavily) in the keychain. */
+async function search(args: readonly string[]): Promise<void> {
+  const provider = args[1]
+  if (args[0] !== 'set-key' || !provider) {
+    console.error('Usage: timmy search set-key <provider>   (e.g. tavily)')
+    process.exit(1)
+  }
+  const { runtime } = buildRuntime()
+  try {
+    // read the key from stdin (on Enter) so it never lands in shell history
+    const key = await new Promise<string>((resolve) => {
+      const rl = createInterface({ input: process.stdin, output: process.stdout })
+      rl.question(`Paste the API key for search provider '${provider}' and press Enter:\n`, (a) => {
+        rl.close()
+        resolve(a.trim())
+      })
+    })
+    await runtime.runPromise(setSearchKey(provider, key))
+    console.log(`stored search key for '${provider}'   (restart Timmy to apply)`)
+  } finally {
+    await runtime.dispose()
+  }
+}
+
 /** `timmy permission <status|set|mode|allow>` — manage the allow/ask/block permission system. */
 function permission(args: readonly string[]): void {
   const sub = args[0]
@@ -394,6 +419,9 @@ Permissions (allow / ask / block — safe runs, risky asks, blocked is off):
   Note: askClaude (agentic Claude Code) needs the \`claude\` CLI installed + logged in
   (\`claude auth status\`; \`model status\` shows availability + auto-mode state).
 
+Web search:
+  search set-key <provider>          Store a web-search API key (e.g. \`search set-key tavily\`)
+
 Config: ~/.timmy/config.yaml   ·   Plugins: ~/.timmy/plugins/`)
 }
 
@@ -407,6 +435,7 @@ export function run(): void {
   else if (cmd === 'model') void model(process.argv.slice(3))
   else if (cmd === 'permission') permission(process.argv.slice(3))
   else if (cmd === 'yolo') yolo(process.argv.slice(3))
+  else if (cmd === 'search') void search(process.argv.slice(3))
   else if (cmd === 'version' || cmd === '--version' || cmd === '-v')
     console.log(`Timmy v${VERSION}`)
   else if (cmd === 'help' || cmd === '--help' || cmd === '-h' || cmd === undefined) printHelp()

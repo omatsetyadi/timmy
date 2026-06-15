@@ -9,6 +9,7 @@ import { buildAskModelTool } from '../reasoning/model-router'
 import { buildAskClaudeTool } from '../reasoning/ask-claude'
 import type { StreamChunk } from '../llm/stream-chunk'
 import { buildRunCommandTool } from './run-command-tool'
+import { buildWebSearchTool, buildFetchUrlTool, TAVILY_KEY } from './web-search-tool'
 import { ToolSource } from './tool-source'
 
 const apiKeyKey = (provider: string) => `model:${provider}:api_key`
@@ -75,8 +76,13 @@ export const CoreToolSource = Layer.effect(
     // The direct terminal tool — the cheap, always-available path (no Claude needed). Its
     // per-command permission is decided by the classifier + resolver, not the static tier.
     const runCommand = buildRunCommandTool()
+    // Web search + page fetch (Tavily). Key read directly from the store (core tools are inside
+    // the trust boundary); no key → the tool tells the user to run `timmy search set-key`.
+    const tavilyKey = () => Effect.runPromise(creds.get(TAVILY_KEY))
+    const webSearch = buildWebSearchTool(tavilyKey)
+    const fetchUrl = buildFetchUrlTool(tavilyKey)
     return {
-      tools: [askModel, runCommand, ...askClaudeTool],
+      tools: [askModel, runCommand, webSearch, fetchUrl, ...askClaudeTool],
       credentialScopeByTool: new Map(),
     }
   }),

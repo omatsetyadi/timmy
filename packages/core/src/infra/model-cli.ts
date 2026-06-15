@@ -86,6 +86,13 @@ export const setKey = (provider: string, key: string) =>
     yield* creds.set(apiKeyKey(provider), key)
   })
 
+/** Store a search-provider API key under `search:<provider>:api_key` (e.g. Tavily for webSearch). */
+export const setSearchKey = (provider: string, key: string) =>
+  Effect.gen(function* () {
+    const creds = yield* CredentialStore
+    yield* creds.set(`search:${provider}:api_key`, key)
+  })
+
 export interface StatusReport {
   frontdesk: { provider: string; model: string }
   reasoningDefault: string | null
