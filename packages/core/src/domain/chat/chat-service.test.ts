@@ -1,9 +1,12 @@
 import { it } from '@effect/vitest'
 import { Chunk, Effect, Either, Fiber, Layer, Stream } from 'effect'
 import { expect } from 'vitest'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { Tool } from 'timmy-sdk'
 import { ChatService } from './chat-service'
-import { LlmClient } from '../llm/llm-client'
+import { LlmClient, type ChatMessage } from '../llm/llm-client'
 import { ThreadStore } from '../persistence/thread-store'
 import { SqlError } from '../persistence/errors'
 import { Config } from '../config/config'
@@ -494,3 +497,88 @@ it.live(
     )
   },
 )
+
+// ---------------------------------------------------------------------------
+// Native multimodal: image referenced + frontdesk can see → attach inline
+// ---------------------------------------------------------------------------
+
+// A cloud vision frontdesk (gpt-4o) makes capabilitiesFor return vision WITHOUT an /api/show
+// fetch, so this exercises the orchestration with no network.
+const captureLlm = (sink: { msgs: ChatMessage[] }) =>
+  Layer.succeed(
+    LlmClient,
+    LlmClient.of({
+      chat: (messages) => {
+        sink.msgs = messages
+        return Stream.fromIterable([
+          { type: 'content', content: 'ok' } as const,
+          { type: 'finish', reason: 'stop' } as const,
+        ])
+      },
+      isAvailable: () => Effect.succeed(true),
+      detectCapabilities: () =>
+        Effect.succeed({ tools: true, vision: true, audio: false, realtime: false }),
+    }),
+  )
+
+const tmpImage = (): string => {
+  const dir = mkdtempSync(join(tmpdir(), 'mm-'))
+  const p = join(dir, 'pic.png')
+  writeFileSync(p, Buffer.from([1, 2, 3]))
+  return p
+}
+const cfgWithFrontdesk = (provider: string, model: string) => {
+  const path = join(mkdtempSync(join(tmpdir(), 'mmcfg-')), 'config.yaml')
+  writeFileSync(path, `models:\n  frontdesk: { provider: ${provider}, model: ${model} }\n`)
+  return Config.Live(path)
+}
+
+it.effect('attaches an image inline when the message references one + frontdesk can see', () => {
+  const img = tmpImage()
+  const sink = { msgs: [] as ChatMessage[] }
+  return Effect.gen(function* () {
+    const chat = yield* ChatService
+    const { stream } = yield* chat.send({ message: `check ${img}` })
+    yield* Stream.runDrain(stream)
+    const last = sink.msgs[sink.msgs.length - 1]
+    expect(last?.images?.length).toBe(1)
+    expect(last?.images?.[0]).toMatch(/^data:image\/png;base64,/)
+  }).pipe(
+    Effect.provide(
+      ChatService.Live.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            cfgWithFrontdesk('openai', 'gpt-4o'),
+            ThreadStub,
+            captureLlm(sink),
+            EmptyToolsLayer,
+          ),
+        ),
+      ),
+    ),
+  )
+})
+
+it.effect('does NOT attach when the frontdesk is text-only (falls back to askVision)', () => {
+  const img = tmpImage()
+  const sink = { msgs: [] as ChatMessage[] }
+  return Effect.gen(function* () {
+    const chat = yield* ChatService
+    const { stream } = yield* chat.send({ message: `check ${img}` })
+    yield* Stream.runDrain(stream)
+    expect(sink.msgs[sink.msgs.length - 1]?.images).toBeUndefined()
+  }).pipe(
+    Effect.provide(
+      ChatService.Live.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            cfgWithFrontdesk('deepseek', 'deepseek-v4-flash'),
+            ThreadStub,
+            captureLlm(sink),
+            EmptyToolsLayer,
+          ),
+        ),
+      ),
+    ),
+  )
+})

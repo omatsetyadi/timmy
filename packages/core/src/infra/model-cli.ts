@@ -180,7 +180,7 @@ export const statusReport = Effect.gen(function* () {
     const baseUrl = resolveBaseUrl(key, pc.base_url)
     // Only Ollama exposes real capabilities (/api/show). For cloud we DON'T guess — leave
     // capabilities unknown rather than printing made-up flags.
-    const models: StatusModel[] = yield* Effect.promise(() =>
+    const models: StatusModel[] = yield* Effect.tryPromise(() =>
       Promise.all(
         names.map(async (name) =>
           pc.kind === 'ollama'
@@ -188,7 +188,7 @@ export const statusReport = Effect.gen(function* () {
             : { name },
         ),
       ),
-    )
+    ).pipe(Effect.orElseSucceed(() => names.map((name) => ({ name }))))
     rows.push({ key, kind: pc.kind, hasKey, models })
   }
   return {

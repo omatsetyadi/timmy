@@ -2,6 +2,7 @@ import { Context, Effect, Fiber, Layer, Ref, Stream } from 'effect'
 import { Config, effectiveProviders } from '../config/config'
 import { LlmClient, type ChatMessage } from '../llm/llm-client'
 import { resolveModelCapabilities } from '../llm/capabilities'
+import { KNOWN_BASE_URLS, resolveBaseUrl } from '../llm/known-providers'
 import { ThreadStore } from '../persistence/thread-store'
 import { ToolRegistry } from '../tools/tool-registry'
 import { SafeExecution } from '../tools/safe-execution'
@@ -71,12 +72,19 @@ export class ChatService extends Context.Tag('timmy/chat/service')<
           // image path is present, so there's no per-message overhead otherwise.
           if (extractImagePaths(p.message).length > 0) {
             const fd = config.models.frontdesk
-            const fdKind = effectiveProviders(config)[fd.provider]?.kind ?? 'openai-compat'
-            const caps = yield* Effect.promise(() =>
-              resolveModelCapabilities(fdKind, fd.model, fd.base_url),
-            )
+            const pc = effectiveProviders(config)[fd.provider]
+            // Mirror frontdeskTarget's precedence: configured kind → known-cloud → ollama.
+            const fdKind = pc?.kind ?? (fd.provider in KNOWN_BASE_URLS ? 'openai-compat' : 'ollama')
+            const baseUrl = resolveBaseUrl(fd.provider, pc?.base_url ?? fd.base_url)
+            // Probe + read can reject (network / fs perms); degrade to "no inline image" rather
+            // than letting a defect hang the stream — the frontdesk can still use the askVision tool.
+            const caps = yield* Effect.tryPromise(() =>
+              resolveModelCapabilities(fdKind, fd.model, baseUrl),
+            ).pipe(Effect.orElseSucceed(() => ({ vision: false }) as { vision: boolean }))
             if (caps.vision) {
-              const images = yield* Effect.promise(() => attachImages(p.message))
+              const images = yield* Effect.tryPromise(() => attachImages(p.message)).pipe(
+                Effect.orElseSucceed(() => [] as string[]),
+              )
               const lastUser = messages[messages.length - 1]
               if (images.length > 0 && lastUser) lastUser.images = images
             }

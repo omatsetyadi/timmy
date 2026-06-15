@@ -26,7 +26,9 @@ export async function resolveModelCapabilities(
     const res = await fetch(`${baseUrl ?? 'http://localhost:11434'}/api/show`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: model }),
+      // send both keys — Ollama renamed /api/show's field from `name` to `model`; including
+      // both works across versions (it ignores the unused one).
+      body: JSON.stringify({ name: model, model }),
     })
     if (!res.ok) return NONE
     const data = (await res.json()) as { capabilities?: string[] }

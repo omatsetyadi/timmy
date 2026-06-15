@@ -121,7 +121,7 @@ export const makeOllamaClient = (config: LlmConfig): Context.Tag.Service<LlmClie
       fetch(`${config.baseUrl}/api/show`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ model: config.model }),
+        body: JSON.stringify({ name: config.model, model: config.model }),
       }).then((r) => r.json() as Promise<{ capabilities?: string[] }>),
     ).pipe(
       Effect.map((d) => ({
