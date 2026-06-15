@@ -14,9 +14,11 @@ import { hasBuiltEntry, installFromGithub, installLocal, listInstalled, remove }
 import {
   setKey,
   setSearchKey,
+  registerKnownProvider,
   statusReport,
   setFrontdeskConfig,
   setReasoningConfig,
+  setVisionConfig,
   setAskClaudeModel,
   setAskClaudeBypass,
   discoveredTargetIds,
@@ -144,6 +146,17 @@ async function model(args: readonly string[]): Promise<void> {
       })
       await runtime.runPromise(setKey(provider, key))
       console.log(`stored key for '${provider}'`)
+      // Known cloud providers (openai/deepseek/anthropic/gemini) auto-register as a usable
+      // provider so they show up + can be selected without a manual config edit.
+      if (registerKnownProvider(provider)) {
+        console.log(
+          `registered '${provider}' (openai-compat) — run \`timmy model refresh\` to discover its models`,
+        )
+      } else {
+        console.log(
+          `note: '${provider}' is custom — add it to ~/.timmy/config.yaml under \`providers:\` with a base_url`,
+        )
+      }
     } else if (sub === 'status' || sub === 'list') {
       const r = await runtime.runPromise(statusReport)
       console.log(JSON.stringify(r, null, 2))
@@ -187,6 +200,16 @@ async function model(args: readonly string[]): Promise<void> {
         setReasoningConfig(target)
         console.log(`reasoning default → ${target}   (restart Timmy to apply)`)
       }
+    } else if (sub === 'vision') {
+      const target = args[1]
+      if (!target || !target.includes('/')) {
+        console.error('Usage: timmy model vision <provider>/<model>   (e.g. ollama/llava)')
+        process.exit(1)
+      }
+      // No discovered-target check: if the model can't actually do vision, askVision degrades
+      // gracefully at use time (answers "can't" → delegate) rather than gating config here.
+      setVisionConfig(target)
+      console.log(`vision model → ${target}   (restart Timmy to apply)`)
     } else if (sub === 'askclaude') {
       const claudeModel = args[1]
       if (!claudeModel) {
@@ -211,7 +234,7 @@ async function model(args: readonly string[]): Promise<void> {
       )
     } else {
       console.error(
-        'Usage: timmy model <set-key <provider> | use <provider>/<model> | reasoning <provider>/<model>|--clear | askclaude <claude-model> | auto <on|off> | status | refresh>',
+        'Usage: timmy model <set-key <provider> | use <provider>/<model> | reasoning <provider>/<model>|--clear | vision <provider>/<model> | askclaude <claude-model> | auto <on|off> | status | refresh>',
       )
       process.exit(1)
     }
@@ -403,6 +426,7 @@ Models (cloud + local LLM providers):
   model set-key <provider>           Store a provider API key in the keychain (reads stdin)
   model use <provider>/<model>       Set the frontdesk model (validated against discovered)
   model reasoning <provider>/<model> Set the askModel default target (or --clear)
+  model vision <provider>/<model>    Set the askVision model (e.g. ollama/llava)
   model askclaude <claude-model>     Set the model askClaude runs (e.g. claude-opus-4-8)
   model auto <on|off>                Toggle askClaude auto-mode (any tool, no allowlist)
   model status                       Show providers, discovered models, frontdesk + reasoning

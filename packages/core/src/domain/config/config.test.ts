@@ -51,6 +51,13 @@ providers:
     expect(cfg.providers?.ollama.kind).toBe('ollama')
   })
 
+  it('parses models.vision.default', () => {
+    const path = writeCfg(
+      `models:\n  frontdesk: { provider: ollama, model: qwen3:14b }\n  vision: { default: ollama/llava }\n`,
+    )
+    expect(readConfigSync(path).models.vision?.default).toBe('ollama/llava')
+  })
+
   it('defaults: no providers/reasoning block → undefined, frontdesk still works', () => {
     const path = writeCfg(`models:\n  frontdesk: { provider: ollama, model: qwen3:14b }\n`)
     const cfg = readConfigSync(path)

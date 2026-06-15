@@ -5,6 +5,9 @@ import { Config, CONFIG_PATH, effectiveProviders } from '../domain/config/config
 import { CredentialStore } from '../domain/credentials/credential-store'
 import { ProviderRegistry } from '../domain/llm/provider-registry'
 import { DEFAULT_CLAUDE_MODEL, KNOWN_CLAUDE_MODELS } from '../domain/llm/claude-code-provider'
+import { KNOWN_BASE_URLS, resolveBaseUrl } from '../domain/llm/known-providers'
+import { resolveModelCapabilities } from '../domain/llm/capabilities'
+import type { DetectedCapabilities } from '../domain/llm/llm-client'
 
 const apiKeyKey = (provider: string) => `model:${provider}:api_key`
 
@@ -12,6 +15,7 @@ interface RawConfig {
   models?: {
     frontdesk?: { provider: string; model: string }
     reasoning?: { default?: string }
+    vision?: { default?: string }
   }
   providers?: Record<string, Record<string, unknown>>
   [key: string]: unknown
@@ -74,6 +78,15 @@ export const setReasoningConfig = (target: string | null): void => {
   saveRaw(raw)
 }
 
+/** Set the vision model (`models.vision.default = "<provider>/<model>"`) the askVision tool uses. */
+export const setVisionConfig = (target: string): void => {
+  const raw = loadRaw()
+  const models = raw.models ?? {}
+  models.vision = { ...(models.vision ?? {}), default: target }
+  raw.models = models
+  saveRaw(raw)
+}
+
 /** Discovered target ids ("provider/model") — used by the CLI to validate `model use/reasoning`. */
 export const discoveredTargetIds = Effect.gen(function* () {
   const pool = yield* (yield* ProviderRegistry).pool
@@ -86,6 +99,23 @@ export const setKey = (provider: string, key: string) =>
     yield* creds.set(apiKeyKey(provider), key)
   })
 
+/** Pure: register a known cloud provider (openai/deepseek/anthropic/gemini) as an
+ *  openai-compat entry, so `set-key <provider>` makes it usable without a manual config edit.
+ *  No-op for an already-present provider or an unknown one (those need manual config + base_url). */
+export function addKnownProvider(raw: RawConfig, provider: string): RawConfig {
+  if (!(provider in KNOWN_BASE_URLS)) return raw
+  const providers = raw.providers ?? {}
+  if (providers[provider]) return raw
+  return { ...raw, providers: { ...providers, [provider]: { kind: 'openai-compat' } } }
+}
+
+/** Persist {@link addKnownProvider}; returns true if `provider` is a known cloud provider. */
+export const registerKnownProvider = (provider: string): boolean => {
+  if (!(provider in KNOWN_BASE_URLS)) return false
+  saveRaw(addKnownProvider(loadRaw(), provider))
+  return true
+}
+
 /** Store a search-provider API key under `search:<provider>:api_key` (e.g. Tavily for webSearch). */
 export const setSearchKey = (provider: string, key: string) =>
   Effect.gen(function* () {
@@ -93,10 +123,18 @@ export const setSearchKey = (provider: string, key: string) =>
     yield* creds.set(`search:${provider}:api_key`, key)
   })
 
+/** A discovered model. `capabilities` is present ONLY when we know it for real — i.e. Ollama
+ *  models (via `/api/show`). For cloud models there's no capability probe, so we DON'T guess:
+ *  `capabilities` is omitted (unknown) rather than showing made-up `false`s. */
+export interface StatusModel {
+  name: string
+  capabilities?: DetectedCapabilities
+}
 export interface StatusReport {
   frontdesk: { provider: string; model: string }
   reasoningDefault: string | null
-  providers: { key: string; kind: string; hasKey: boolean; models: string[]; note?: string }[]
+  visionDefault: string | null
+  providers: { key: string; kind: string; hasKey: boolean; models: StatusModel[]; note?: string }[]
 }
 
 /** `claude auth status` exit 0 → logged in. Spawned directly (no SDK import on the status path). */
@@ -129,21 +167,34 @@ export const statusReport = Effect.gen(function* () {
         key,
         kind: pc.kind,
         hasKey: available,
-        models: KNOWN_CLAUDE_MODELS, // pickable via `model askclaude <model>` (not askModel targets)
+        models: KNOWN_CLAUDE_MODELS.map((m) => ({ name: m })),
         note: `askClaude's agentic engine — currently ${model}${auto}; pick one above with \`model askclaude <model>\`. Not an askModel reasoning target.`,
       })
       continue
     }
-    const models = pool.filter((t) => t.providerKey === key).map((t) => t.model)
+    const names = pool.filter((t) => t.providerKey === key).map((t) => t.model)
     // Hide the implicit Ollama default when it isn't running (no models) and wasn't declared,
     // so cloud-only setups don't see an empty Ollama row. A declared provider always shows.
-    if (!(key in declared) && models.length === 0) continue
+    if (!(key in declared) && names.length === 0) continue
     const hasKey = pc.kind === 'openai-compat' ? (yield* creds.get(apiKeyKey(key))) !== null : true
+    const baseUrl = resolveBaseUrl(key, pc.base_url)
+    // Only Ollama exposes real capabilities (/api/show). For cloud we DON'T guess — leave
+    // capabilities unknown rather than printing made-up flags.
+    const models: StatusModel[] = yield* Effect.promise(() =>
+      Promise.all(
+        names.map(async (name) =>
+          pc.kind === 'ollama'
+            ? { name, capabilities: await resolveModelCapabilities(pc.kind, name, baseUrl) }
+            : { name },
+        ),
+      ),
+    )
     rows.push({ key, kind: pc.kind, hasKey, models })
   }
   return {
     frontdesk: { provider: cfg.models.frontdesk.provider, model: cfg.models.frontdesk.model },
     reasoningDefault: cfg.models.reasoning?.default ?? null,
+    visionDefault: cfg.models.vision?.default ?? null,
     providers: rows,
   } satisfies StatusReport
 })

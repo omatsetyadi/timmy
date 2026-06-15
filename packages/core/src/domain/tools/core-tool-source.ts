@@ -7,6 +7,9 @@ import { resolveBaseUrl } from '../llm/known-providers'
 import { DEFAULT_CLAUDE_MODEL } from '../llm/claude-code-provider'
 import { buildAskModelTool } from '../reasoning/model-router'
 import { buildAskClaudeTool } from '../reasoning/ask-claude'
+import { buildAskVisionTool, mimeFromPath } from '../reasoning/vision'
+import { resolveModelCapabilities } from '../llm/capabilities'
+import { readFile } from 'node:fs/promises'
 import type { StreamChunk } from '../llm/stream-chunk'
 import { buildRunCommandTool } from './run-command-tool'
 import { buildWebSearchTool, buildFetchUrlTool, TAVILY_KEY } from './web-search-tool'
@@ -38,7 +41,10 @@ export const CoreToolSource = Layer.effect(
         providerKey,
         kind: pc.kind,
         model,
-        baseUrl: resolveBaseUrl(providerKey, pc.base_url),
+        // Ollama isn't a known-cloud-URL provider, so default the implicit local endpoint.
+        baseUrl:
+          resolveBaseUrl(providerKey, pc.base_url) ??
+          (pc.kind === 'ollama' ? 'http://localhost:11434' : undefined),
       }
     }
 
@@ -81,8 +87,36 @@ export const CoreToolSource = Layer.effect(
     const tavilyKey = () => Effect.runPromise(creds.get(TAVILY_KEY))
     const webSearch = buildWebSearchTool(tavilyKey)
     const fetchUrl = buildFetchUrlTool(tavilyKey)
+    // Vision: routes a local image to the configured vision model (models.vision.default).
+    const askVision = buildAskVisionTool({
+      resolveTarget,
+      getKey: (provider) => Effect.runPromise(creds.get(apiKeyKey(provider))),
+      // Explicit `models.vision.default` wins; otherwise auto-pick the first discovered model
+      // whose real capabilities include vision (Ollama via /api/show, cloud via the static map).
+      findVisionTarget: async () => {
+        const explicit = cfg.models.vision?.default
+        if (explicit) return explicit
+        for (const t of pool) {
+          const pc = providers[t.providerKey]
+          if (!pc) continue
+          const caps = await resolveModelCapabilities(
+            pc.kind,
+            t.model,
+            resolveBaseUrl(t.providerKey, pc.base_url),
+          )
+          if (caps.vision) return t.id
+        }
+        return null
+      },
+      readImage: async (path) => {
+        const buf = await readFile(path)
+        return { b64: buf.toString('base64'), mime: mimeFromPath(path) }
+      },
+      post: (url, headers, body) =>
+        fetch(url, { method: 'POST', headers, body: JSON.stringify(body) }),
+    })
     return {
-      tools: [askModel, runCommand, webSearch, fetchUrl, ...askClaudeTool],
+      tools: [askModel, runCommand, webSearch, fetchUrl, askVision, ...askClaudeTool],
       credentialScopeByTool: new Map(),
     }
   }),

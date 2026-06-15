@@ -1,5 +1,19 @@
 import { describe, it, expect } from 'vitest'
-import { capabilitiesFor } from './capabilities'
+import { capabilitiesFor, ollamaCapsFromShow } from './capabilities'
+
+describe('ollamaCapsFromShow (real /api/show tags)', () => {
+  it('maps the capability tags to flags', () => {
+    expect(ollamaCapsFromShow(['completion', 'vision', 'tools', 'thinking'])).toEqual({
+      vision: true,
+      audio: false,
+      tools: true,
+      realtime: false,
+    })
+  })
+  it('no vision tag → vision false', () => {
+    expect(ollamaCapsFromShow(['completion', 'tools']).vision).toBe(false)
+  })
+})
 
 describe('capabilitiesFor (static cloud/claude-code map by family)', () => {
   it('claude → vision + tools', () => {

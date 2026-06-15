@@ -1,13 +1,19 @@
 import { Layer, ManagedRuntime, Effect } from 'effect'
 import { join } from 'node:path'
-import { CONFIG_DIR, Config, readConfigSync, type TimmyConfig } from '../domain/config/config'
+import {
+  CONFIG_DIR,
+  Config,
+  effectiveProviders,
+  readConfigSync,
+  type TimmyConfig,
+} from '../domain/config/config'
 import { CredentialStore } from '../domain/credentials/credential-store'
 import { Db } from '../domain/persistence/db'
 import { ThreadStore } from '../domain/persistence/thread-store'
 import { LlmClient } from '../domain/llm/llm-client'
 import { makeProvider, type ProviderTarget } from '../domain/llm/provider'
 import { ProviderRegistry } from '../domain/llm/provider-registry'
-import { resolveBaseUrl } from '../domain/llm/known-providers'
+import { KNOWN_BASE_URLS, resolveBaseUrl } from '../domain/llm/known-providers'
 import { ChatService } from '../domain/chat/chat-service'
 import { PluginToolSource } from '../domain/tools/plugin-tool-source'
 import { CoreToolSource } from '../domain/tools/core-tool-source'
@@ -45,14 +51,18 @@ import { PendingConfirmations } from '../domain/tools/confirmations'
  * channel so the runtime can resolve each of them via `runtime.runPromise(Tag…)`.
  */
 
-/** Resolve the frontdesk target from config (kind comes from the providers map; falls back
- *  to ollama for the default single-provider config). */
-const frontdeskTarget = (cfg: TimmyConfig): ProviderTarget => {
+/** Resolve the frontdesk target from config. Kind precedence: the configured provider's kind
+ *  (incl. the implicit Ollama default) → a **known cloud provider** (openai/deepseek/anthropic/
+ *  gemini) is `openai-compat` → otherwise `ollama`. The known-cloud step is what stops an
+ *  all-cloud frontdesk (whose provider may not be an explicit `providers:` entry) from silently
+ *  falling back to Ollama and erroring with "ollama request failed". */
+export const frontdeskTarget = (cfg: TimmyConfig): ProviderTarget => {
   const f = cfg.models.frontdesk
-  const pc = cfg.providers?.[f.provider]
+  const pc = effectiveProviders(cfg)[f.provider]
+  const kind = pc?.kind ?? (f.provider in KNOWN_BASE_URLS ? 'openai-compat' : 'ollama')
   return {
     providerKey: f.provider,
-    kind: pc?.kind ?? 'ollama',
+    kind,
     model: f.model,
     baseUrl: resolveBaseUrl(f.provider, pc?.base_url ?? f.base_url),
   }

@@ -37,6 +37,16 @@ export const toOpenAiMessages = (messages: ChatMessage[]): unknown[] =>
       }
     }
     if (m.role === 'tool') return { role: 'tool', tool_call_id: m.tool_call_id, content: m.content }
+    // Inline images → OpenAI multimodal content parts (text + image_url data URLs).
+    if (m.images?.length) {
+      return {
+        role: m.role,
+        content: [
+          { type: 'text', text: m.content },
+          ...m.images.map((url) => ({ type: 'image_url', image_url: { url } })),
+        ],
+      }
+    }
     return { role: m.role, content: m.content }
   })
 

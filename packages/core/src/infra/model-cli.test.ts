@@ -1,7 +1,7 @@
 import { it } from '@effect/vitest'
 import { Effect, Layer } from 'effect'
 import { describe, it as itV, expect } from 'vitest'
-import { setKey, statusReport, buildInitConfig } from './model-cli'
+import { setKey, statusReport, buildInitConfig, addKnownProvider } from './model-cli'
 import { CredentialStore } from '../domain/credentials/credential-store'
 import { Config } from '../domain/config/config'
 import { ProviderRegistry } from '../domain/llm/provider-registry'
@@ -35,6 +35,21 @@ it.effect('statusReport lists providers with availability + discovered models', 
     expect(Array.isArray(report.providers)).toBe(true)
   }).pipe(Effect.provide(Layer.mergeAll(TestCreds, Config.Live(), TestProviderRegistry))),
 )
+
+describe('addKnownProvider', () => {
+  itV('adds a known provider (openai) as openai-compat when absent', () => {
+    expect(addKnownProvider({}, 'openai')).toEqual({
+      providers: { openai: { kind: 'openai-compat' } },
+    })
+  })
+  itV('is a no-op for an already-present provider', () => {
+    const raw = { providers: { openai: { kind: 'openai-compat', base_url: 'x' } } }
+    expect(addKnownProvider(raw, 'openai')).toBe(raw)
+  })
+  itV('is a no-op for an unknown provider (needs manual config)', () => {
+    expect(addKnownProvider({}, 'my-self-hosted')).toEqual({})
+  })
+})
 
 describe('buildInitConfig (timmy init → config object)', () => {
   itV(

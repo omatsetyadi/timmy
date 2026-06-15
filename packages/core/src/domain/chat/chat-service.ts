@@ -1,6 +1,7 @@
 import { Context, Effect, Fiber, Layer, Ref, Stream } from 'effect'
-import { Config } from '../config/config'
+import { Config, effectiveProviders } from '../config/config'
 import { LlmClient, type ChatMessage } from '../llm/llm-client'
+import { resolveModelCapabilities } from '../llm/capabilities'
 import { ThreadStore } from '../persistence/thread-store'
 import { ToolRegistry } from '../tools/tool-registry'
 import { SafeExecution } from '../tools/safe-execution'
@@ -8,6 +9,7 @@ import type { StreamChunk, ToolCallChunk } from '../llm/stream-chunk'
 import type { LlmError } from '../llm/errors'
 import { ChatValidationError, type ChatError } from './errors'
 import { buildMessages } from './prompt'
+import { extractImagePaths, attachImages } from './image-attach'
 import { ProviderRegistry } from '../llm/provider-registry'
 
 export interface SendParams {
@@ -60,6 +62,25 @@ export class ChatService extends Context.Tag('timmy/chat/service')<
             claudeAvailable,
           )
           yield* store.addMessage(threadId, 'user', p.message)
+
+          // Native-first vision: if the message references an image AND the frontdesk model can
+          // see (Ollama tells us truthfully via /api/show), attach the image inline to the
+          // frontdesk call — one call, no askVision round-trip. Only the text is persisted
+          // above (images are request-only). If the frontdesk can't see, we don't attach and
+          // it can fall back to the askVision tool. The capability probe runs ONLY when an
+          // image path is present, so there's no per-message overhead otherwise.
+          if (extractImagePaths(p.message).length > 0) {
+            const fd = config.models.frontdesk
+            const fdKind = effectiveProviders(config)[fd.provider]?.kind ?? 'openai-compat'
+            const caps = yield* Effect.promise(() =>
+              resolveModelCapabilities(fdKind, fd.model, fd.base_url),
+            )
+            if (caps.vision) {
+              const images = yield* Effect.promise(() => attachImages(p.message))
+              const lastUser = messages[messages.length - 1]
+              if (images.length > 0 && lastUser) lastUser.images = images
+            }
+          }
 
           const tools = registry.toModelTools()
 

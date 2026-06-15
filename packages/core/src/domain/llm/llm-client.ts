@@ -15,7 +15,13 @@ export interface ChatMessage {
   tool_calls?: ToolCallRef[]
   /** Present on a tool-result message; references the assistant tool_call it answers. */
   tool_call_id?: string
+  /** Inline images (data URLs: `data:<mime>;base64,<...>`) for a multimodal model to see
+   *  directly. Attached to the request only — never persisted to thread history. */
+  images?: string[]
 }
+
+/** Strip a data-URL prefix to the raw base64 Ollama's `images[]` wants. */
+const toRawBase64 = (dataUrl: string): string => dataUrl.replace(/^data:[^;]+;base64,/, '')
 
 const safeJsonObject = (s: string): Record<string, unknown> => {
   try {
@@ -29,7 +35,7 @@ const safeJsonObject = (s: string): Record<string, unknown> => {
 /** Map our canonical ChatMessage[] to Ollama's /api/chat wire shape: an assistant turn's
  *  tool calls become `{ function: { name, arguments: <object> } }` (Ollama wants an object,
  *  not a JSON string); tool results are `{ role:'tool', content }`. */
-const toOllamaMessages = (messages: ChatMessage[]): unknown[] =>
+export const toOllamaMessages = (messages: ChatMessage[]): unknown[] =>
   messages.map((m) => {
     if (m.role === 'assistant' && m.tool_calls?.length) {
       return {
@@ -41,6 +47,10 @@ const toOllamaMessages = (messages: ChatMessage[]): unknown[] =>
       }
     }
     if (m.role === 'tool') return { role: 'tool', content: m.content }
+    // Ollama /api/chat takes images as raw base64 in an `images` array on the message.
+    if (m.images?.length) {
+      return { role: m.role, content: m.content, images: m.images.map(toRawBase64) }
+    }
     return { role: m.role, content: m.content }
   })
 export interface DetectedCapabilities {

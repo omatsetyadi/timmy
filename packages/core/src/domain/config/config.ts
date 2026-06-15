@@ -51,7 +51,7 @@ export interface PermissionConfig {
 
 export interface TimmyConfig {
   server: { host: string; port: number; auth: { enabled: boolean; token: 'keychain' | string } }
-  models: { frontdesk: FrontdeskConfig; reasoning?: ReasoningConfig }
+  models: { frontdesk: FrontdeskConfig; reasoning?: ReasoningConfig; vision?: ReasoningConfig }
   providers?: Record<string, ProviderConfig>
   permissions: PermissionConfig
   assistant: AssistantConfig
@@ -91,6 +91,7 @@ function loadConfig(path: string): TimmyConfig {
     models: {
       frontdesk: { ...DEFAULTS.models.frontdesk, ...f.models?.frontdesk },
       ...(f.models?.reasoning ? { reasoning: f.models.reasoning } : {}),
+      ...(f.models?.vision ? { vision: f.models.vision } : {}),
     },
     ...(f.providers ? { providers: f.providers } : {}),
     permissions: { ...DEFAULTS.permissions, ...f.permissions },
