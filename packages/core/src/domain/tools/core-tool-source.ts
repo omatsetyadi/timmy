@@ -11,7 +11,6 @@ import { buildAskVisionTool, mimeFromPath } from '../reasoning/vision'
 import { resolveModelCapabilities } from '../llm/capabilities'
 import { readFile } from 'node:fs/promises'
 import type { StreamChunk } from '../llm/stream-chunk'
-import { buildRunCommandTool } from './run-command-tool'
 import { ToolSource } from './tool-source'
 
 const apiKeyKey = (provider: string) => `model:${provider}:api_key`
@@ -78,11 +77,9 @@ export const CoreToolSource = Layer.effect(
           }),
         ]
       : []
-    // The direct terminal tool — the cheap, always-available path (no Claude needed). Its
-    // per-command permission is decided by the classifier + resolver, not the static tier.
-    const runCommand = buildRunCommandTool()
-    // Web search/fetch moved out to `timmy-plugin-web` (libs+plugins realignment). Install it:
-    // `timmy plugin install github:omatsetyadi/timmy-plugin-web` + `timmy plugin set-key web tavily_api_key`.
+    // Terminal (runCommand) + web search/fetch moved out to plugins (libs+plugins realignment):
+    // `timmy plugin install github:omatsetyadi/timmy-plugin-shell` (+ timmy-plugin-web). runCommand's
+    // per-command classifier now rides the SDK `Tool.classify` hook from the shell plugin.
     // Vision: routes a local image to the configured vision model (models.vision.default).
     const askVision = buildAskVisionTool({
       resolveTarget,
@@ -112,7 +109,7 @@ export const CoreToolSource = Layer.effect(
         fetch(url, { method: 'POST', headers, body: JSON.stringify(body) }),
     })
     return {
-      tools: [askModel, runCommand, askVision, ...askClaudeTool],
+      tools: [askModel, askVision, ...askClaudeTool],
       credentialScopeByTool: new Map(),
     }
   }),

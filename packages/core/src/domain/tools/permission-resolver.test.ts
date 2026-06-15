@@ -82,44 +82,6 @@ describe('resolvePermission', () => {
     ).toBe('ask')
   })
 
-  it('routes runCommand through the command classifier', () => {
-    expect(
-      resolvePermission({
-        toolName: 'runCommand',
-        riskLevel: 'confirm',
-        args: { command: 'ls -la' },
-        config: cfg(),
-      }),
-    ).toBe('allow')
-    expect(
-      resolvePermission({
-        toolName: 'runCommand',
-        riskLevel: 'confirm',
-        args: { command: 'rm -rf /' },
-        config: cfg(),
-      }),
-    ).toBe('ask')
-    expect(
-      resolvePermission({
-        toolName: 'runCommand',
-        riskLevel: 'confirm',
-        args: { command: 'npm install x' },
-        config: cfg({ commands: { allow: ['npm install'] } }),
-      }),
-    ).toBe('allow')
-  })
-
-  it('an explicit runCommand=allow override beats the classifier', () => {
-    expect(
-      resolvePermission({
-        toolName: 'runCommand',
-        riskLevel: 'confirm',
-        args: { command: 'rm -rf /' },
-        config: cfg({ tools: { runCommand: 'allow' } }),
-      }),
-    ).toBe('allow')
-  })
-
   // --- dynamic risk-classifier hook (SDK Tool.classify) — the plugin path -----------------
 
   it('uses a tool-provided classify hook instead of the static tier', () => {

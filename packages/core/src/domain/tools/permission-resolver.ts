@@ -1,6 +1,5 @@
 import type { RiskClassifierContext, RiskDecision, RiskLevel } from 'timmy-sdk'
 import { Permission, type PermissionConfig } from '../config/config'
-import { classifyCommand, RUN_COMMAND } from './command-risk'
 
 export interface ResolveInput {
   toolName: string
@@ -52,12 +51,9 @@ export function resolvePermission(input: ResolveInput): Permission {
   // 3. YOLO bypasses asking.
   if (config.mode === 'yolo') return Permission.ALLOW
 
-  // 4. the tool's own decision.
-  // runCommand keeps its built-in classifier (core-special until it migrates to a plugin in the
-  // libs+plugins realignment; at that point it declares `classify` like any other plugin tool).
-  if (toolName === RUN_COMMAND)
-    return classifyCommand(String(args.command ?? ''), config.commands?.allow ?? [])
-  // Any tool can supply a dynamic classifier (the generalized plugin path, e.g. runAppleScript).
+  // 4. the tool's own decision: a tool-supplied dynamic classifier (the plugin path — runCommand,
+  //    runAppleScript, … decide per-call from the args) else the declared tier. `commands.allow`
+  //    is the user's grown auto-allow list, handed to the classifier as `ctx.allowlist`.
   if (classify)
     return classify(args, { allowlist: config.commands?.allow ?? [] }) === 'allow'
       ? Permission.ALLOW
