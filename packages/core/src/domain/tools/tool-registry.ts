@@ -1,8 +1,19 @@
 import { Context, Effect, Layer } from 'effect'
-import type { Tool, ToolContext, ToolResult } from 'timmy-sdk'
+import { Platform, type Tool, type ToolContext, type ToolResult } from 'timmy-sdk'
 import { CredentialStore } from '../credentials/credential-store'
 import { ToolError, ToolNotFoundError } from './errors'
 import { ToolSource } from './tool-source'
+
+/** Node's `process.platform` → the SDK's `Platform`, so tools can branch on the OS without
+ *  depending on any machine package. Unknown unix-likes (freebsd, etc.) fall back to
+ *  `Platform.LINUX` rather than throwing — `platform` is an informational tag, never a reason
+ *  to fail tool registration. Computed once at registry build. */
+const PLATFORM_BY_NODE: Partial<Record<NodeJS.Platform, Platform>> = {
+  win32: Platform.WINDOWS,
+  darwin: Platform.MAC,
+  linux: Platform.LINUX,
+}
+const currentPlatform = (): Platform => PLATFORM_BY_NODE[process.platform] ?? Platform.LINUX
 
 export interface ModelTool {
   type: 'function'
@@ -25,6 +36,7 @@ export class ToolRegistry extends Context.Tag('timmy/tools/registry')<
     Effect.gen(function* () {
       const { tools, credentialScopeByTool } = yield* ToolSource
       const credStore = yield* CredentialStore
+      const platform = currentPlatform()
 
       // Register each tool alongside a credentials object scoped to its owning plugin's
       // declared keys. Built once at registration time: the scope is static per tool, so
@@ -74,7 +86,8 @@ export class ToolRegistry extends Context.Tag('timmy/tools/registry')<
             // interrupted turn cancels in-flight tool work. (SafeExecution gating is
             // applied by the caller before this runs.)
             return yield* Effect.tryPromise({
-              try: (abortSignal) => tool.execute(args, { credentials, signal: abortSignal }),
+              try: (abortSignal) =>
+                tool.execute(args, { credentials, signal: abortSignal, platform }),
               catch: (e) =>
                 new ToolError({ message: `tool '${name}' failed`, tool: name, cause: e }),
             })

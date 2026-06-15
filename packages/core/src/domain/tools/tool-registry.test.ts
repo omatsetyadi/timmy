@@ -1,7 +1,7 @@
 import { it } from '@effect/vitest'
 import { Effect, Layer } from 'effect'
 import { expect } from 'vitest'
-import type { Tool } from 'timmy-sdk'
+import { Platform, type Tool } from 'timmy-sdk'
 import { CredentialStore } from '../credentials/credential-store'
 import { ToolRegistry } from './tool-registry'
 import { ToolSource } from './tool-source'
@@ -64,6 +64,26 @@ const scopedSource = Layer.succeed(ToolSource, {
   credentialScopeByTool: new Map([['needsCred', { plugin: 'p', keys: ['declared'] }]]),
 })
 const scopedLayer = ToolRegistry.Live.pipe(Layer.provide(scopedSource), Layer.provide(CredStub))
+
+// A tool that reports the platform it received from its execution context.
+const reportsPlatform: Tool = {
+  name: 'plat',
+  description: 'reports platform',
+  riskLevel: 'safe',
+  parameters: { type: 'object', properties: {} },
+  execute: async (_args, ctx) => ({ ok: true, data: ctx.platform }),
+}
+const platLayer = ToolRegistry.Live.pipe(
+  Layer.provide(ToolSource.layer([reportsPlatform])),
+  Layer.provide(CredStub),
+)
+it.effect('passes the current platform into the tool execution context', () =>
+  Effect.gen(function* () {
+    const reg = yield* ToolRegistry
+    const r = yield* reg.execute('plat', {})
+    expect([Platform.MAC, Platform.WINDOWS, Platform.LINUX]).toContain(r.data)
+  }).pipe(Effect.provide(platLayer)),
+)
 
 it.effect(
   'scopes credentials to the owning plugin: declared keys resolve, others are blocked',

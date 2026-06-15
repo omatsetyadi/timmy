@@ -1,6 +1,23 @@
 /** timmy-sdk — the plugin contract. Plugins depend on this; timmy-core validates
  *  against it. Intentionally zero-dependency and Effect-free (decision E). */
 
+/** Plugin contract version. A plugin declares the version it was built against via
+ *  `TimmyPlugin.apiVersion`; the host accepts a supported range and skips the rest with
+ *  a clear message (it never crashes). Bump only on a breaking contract change. */
+export const PLUGIN_API_VERSION = 1
+
+/** Host operating system, surfaced to tools so cross-platform plugins can branch
+ *  without depending on any OS package. Exposed as a const object — reference
+ *  `Platform.MAC` instead of the bare string — while the value type stays the
+ *  `'mac' | 'windows' | 'linux'` union, so plugin authors can still compare
+ *  `ctx.platform === 'mac'` ergonomically if they prefer. */
+export const Platform = {
+  MAC: 'mac',
+  WINDOWS: 'windows',
+  LINUX: 'linux',
+} as const
+export type Platform = (typeof Platform)[keyof typeof Platform]
+
 export type RiskLevel = 'safe' | 'confirm' | 'blocked'
 
 export function isRiskLevel(x: unknown): x is RiskLevel {
@@ -12,6 +29,8 @@ export interface ToolContext {
   credentials: { get(key: string): Promise<string | null> }
   /** Aborted when the turn is cancelled. */
   signal: AbortSignal
+  /** The host OS this tool is running on. */
+  platform: Platform
 }
 
 export interface ToolResult {
@@ -36,6 +55,8 @@ export interface CredentialSpec {
 }
 
 export interface TimmyPlugin {
+  /** The contract version this plugin targets — set to `PLUGIN_API_VERSION`. */
+  apiVersion: number
   name: string
   version: string
   credentials?: CredentialSpec[]

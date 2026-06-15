@@ -2,8 +2,14 @@ import { Effect } from 'effect'
 import { existsSync, readdirSync, type Dirent } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import type { TimmyPlugin } from 'timmy-sdk'
+import { PLUGIN_API_VERSION, type TimmyPlugin } from 'timmy-sdk'
 import { decodePlugin } from './plugin-schema'
+
+/** Accepted plugin-contract range. A plugin declaring an `apiVersion` outside this is
+ *  skipped with a clear message. A plugin declaring NONE is loaded with a deprecation
+ *  warning (graceful migration for unversioned plugins). */
+const MIN_PLUGIN_API = 1
+const CURRENT_PLUGIN_API = PLUGIN_API_VERSION
 
 /** Robustly unwrap a plugin's default export across module formats.
  *
@@ -52,6 +58,7 @@ export const PluginLoader = {
         ),
       )
       const loaded: TimmyPlugin[] = []
+      const seenNames = new Set<string>()
       for (const d of dirs) {
         const base = join(pluginsDir, d.name)
         const entry = existsSync(join(base, 'dist', 'index.js'))
@@ -79,8 +86,35 @@ export const PluginLoader = {
           yield* Effect.logWarning(`plugin '${d.name}': a tool has no execute()`)
           continue
         }
+        const p = decoded.right
+        // apiVersion gate: explicit-out-of-range → skip; missing → load with a deprecation
+        // warning (so existing unversioned plugins keep working during migration).
+        if (p.apiVersion === undefined) {
+          yield* Effect.logWarning(
+            `plugin '${d.name}': no apiVersion (legacy) — add 'apiVersion: PLUGIN_API_VERSION'; support for unversioned plugins may be removed`,
+          )
+        } else if (p.apiVersion < MIN_PLUGIN_API || p.apiVersion > CURRENT_PLUGIN_API) {
+          yield* Effect.logWarning(
+            `plugin '${d.name}': incompatible apiVersion ${p.apiVersion} (this Timmy supports ${MIN_PLUGIN_API}..${CURRENT_PLUGIN_API}) — rebuild against a matching timmy-sdk`,
+          )
+          continue
+        }
+        // A plugin must be internally consistent: reject duplicate tool names within it.
+        if (new Set(p.tools.map((t) => t.name)).size !== p.tools.length) {
+          yield* Effect.logWarning(`plugin '${d.name}': duplicate tool names — skipped`)
+          continue
+        }
+        // Two installed plugins claiming the same name → keep the first (dir order), skip
+        // the later (names prefix the credential + model-tool namespaces, so they must be unique).
+        if (seenNames.has(p.name)) {
+          yield* Effect.logWarning(
+            `plugin '${d.name}': duplicate plugin name '${p.name}' — keeping the first, skipping this one`,
+          )
+          continue
+        }
+        seenNames.add(p.name)
         // execute is verified as a function above; Schema.Any can't express the function type, hence the cast.
-        loaded.push(decoded.right as unknown as TimmyPlugin)
+        loaded.push(p as unknown as TimmyPlugin)
       }
       return loaded
     }),

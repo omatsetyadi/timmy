@@ -1,9 +1,14 @@
 import { describe, it, expect } from 'vitest'
 import { Stream } from 'effect'
+import { Platform } from 'timmy-sdk'
 import { buildAskClaudeTool } from './ask-claude'
 import type { StreamChunk } from '../llm/stream-chunk'
 
-const ctx = { credentials: { get: async () => null }, signal: new AbortController().signal }
+const ctx = {
+  credentials: { get: async () => null },
+  signal: new AbortController().signal,
+  platform: Platform.MAC,
+}
 
 describe('buildAskClaudeTool', () => {
   it('is confirm-tier and named askClaude', () => {

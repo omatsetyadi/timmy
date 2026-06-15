@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { Stream } from 'effect'
+import { Platform } from 'timmy-sdk'
 import { parseTargetId, buildAskModelTool } from './model-router'
 import type { ProviderTarget } from '../llm/provider'
 import type { StreamChunk } from '../llm/stream-chunk'
@@ -44,7 +45,11 @@ describe('buildAskModelTool', () => {
     const tool = buildAskModelTool(deps)
     const r = await tool.execute(
       { target: 'deepseek/deepseek-v4-flash', prompt: 'q' },
-      { credentials: { get: async () => null }, signal: new AbortController().signal },
+      {
+        credentials: { get: async () => null },
+        signal: new AbortController().signal,
+        platform: Platform.MAC,
+      },
     )
     expect(r.ok).toBe(true)
     expect(r.data).toEqual({
@@ -58,7 +63,11 @@ describe('buildAskModelTool', () => {
     const tool = buildAskModelTool(deps)
     const r = await tool.execute(
       { prompt: 'q' },
-      { credentials: { get: async () => null }, signal: new AbortController().signal },
+      {
+        credentials: { get: async () => null },
+        signal: new AbortController().signal,
+        platform: Platform.MAC,
+      },
     )
     expect(r.ok).toBe(true)
   })
@@ -67,7 +76,11 @@ describe('buildAskModelTool', () => {
     const tool = buildAskModelTool(deps)
     const r = await tool.execute(
       { target: 'mystery/x', prompt: 'q' },
-      { credentials: { get: async () => null }, signal: new AbortController().signal },
+      {
+        credentials: { get: async () => null },
+        signal: new AbortController().signal,
+        platform: Platform.MAC,
+      },
     )
     expect(r.ok).toBe(false)
     expect(r.error).toMatch(/not configured/)
