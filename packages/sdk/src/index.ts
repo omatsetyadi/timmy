@@ -24,6 +24,17 @@ export function isRiskLevel(x: unknown): x is RiskLevel {
   return x === 'safe' || x === 'confirm' || x === 'blocked'
 }
 
+/** A per-call risk decision from a tool's optional dynamic classifier. Only `allow` | `ask` —
+ *  blocking stays a config / `riskLevel` concern, never a classifier's. */
+export type RiskDecision = 'allow' | 'ask'
+
+/** Context the host passes to a tool's {@link Tool.classify}. */
+export interface RiskClassifierContext {
+  /** The user-grown auto-allow entries for this tool (e.g. the terminal tool's safe-command
+   *  allowlist). Empty when the user hasn't grown one. */
+  readonly allowlist: readonly string[]
+}
+
 export interface ToolContext {
   /** Resolves only the credential keys this plugin declared (least-privilege). */
   credentials: { get(key: string): Promise<string | null> }
@@ -45,6 +56,12 @@ export interface Tool {
   /** JSON Schema object describing the args. */
   parameters: Record<string, unknown>
   riskLevel: RiskLevel
+  /** Optional per-call risk classification. When present, the host calls it at decision time
+   *  with the actual args and uses its result INSTEAD of the static `riskLevel` — e.g. a terminal
+   *  tool auto-allows read-only commands but asks on risky ones; an AppleScript tool allows reads
+   *  and asks on mutations. Returns `allow` | `ask` only (it can never block — config / `riskLevel`
+   *  own blocking). This is what lets gated tools live in plugins, not just core. */
+  classify?: (args: Record<string, unknown>, ctx: RiskClassifierContext) => RiskDecision
   execute(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult>
 }
 

@@ -44,6 +44,7 @@ export class SafeExecution extends Context.Tag('timmy/tools/safe-execution')<
               args,
               plugin,
               config: cfg.permissions,
+              classify: tool.classify,
             })
             if (permission === Permission.BLOCK) return { ok: false, error: 'blocked' }
             if (permission === Permission.ALLOW) return yield* execute()
