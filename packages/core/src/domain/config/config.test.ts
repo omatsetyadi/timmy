@@ -1,10 +1,10 @@
 import { it } from '@effect/vitest'
 import { Effect } from 'effect'
-import { expect } from 'vitest'
+import { describe, expect } from 'vitest'
 import { writeFileSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Config } from './config'
+import { Config, readConfigSync } from './config'
 
 it.effect('uses defaults when no file exists', () =>
   Effect.gen(function* () {
@@ -23,4 +23,49 @@ it.effect('merges a partial file over defaults', () => {
     expect(c.server.port).toBe(4040)
     expect(c.server.host).toBe('127.0.0.1') // default preserved
   }).pipe(Effect.provide(Config.Live(path)))
+})
+
+const writeCfg = (yaml: string): string => {
+  const dir = mkdtempSync(join(tmpdir(), 'timmy-cfg-'))
+  const path = join(dir, 'config.yaml')
+  writeFileSync(path, yaml, 'utf8')
+  return path
+}
+
+describe('config providers + reasoning', () => {
+  it('parses a providers map and models.reasoning.default', () => {
+    const path = writeCfg(`
+models:
+  frontdesk: { provider: ollama, model: qwen3:14b }
+  reasoning: { default: deepseek/deepseek-v4-flash }
+providers:
+  ollama: { kind: ollama, base_url: http://localhost:11434 }
+  deepseek: { kind: openai-compat, base_url: https://api.deepseek.com }
+`)
+    const cfg = readConfigSync(path)
+    expect(cfg.models.reasoning?.default).toBe('deepseek/deepseek-v4-flash')
+    expect(cfg.providers?.deepseek).toEqual({
+      kind: 'openai-compat',
+      base_url: 'https://api.deepseek.com',
+    })
+    expect(cfg.providers?.ollama.kind).toBe('ollama')
+  })
+
+  it('defaults: no providers/reasoning block → undefined, frontdesk still works', () => {
+    const path = writeCfg(`models:\n  frontdesk: { provider: ollama, model: qwen3:14b }\n`)
+    const cfg = readConfigSync(path)
+    expect(cfg.providers).toBeUndefined()
+    expect(cfg.models.reasoning).toBeUndefined()
+    expect(cfg.models.frontdesk.model).toBe('qwen3:14b')
+  })
+
+  it('parses claude_code model + bypass_permissions ("auto mode") toggle', () => {
+    const path = writeCfg(`
+providers:
+  claude_code: { kind: claude-code, model: claude-opus-4-8, bypass_permissions: true }
+`)
+    const cfg = readConfigSync(path)
+    expect(cfg.providers?.claude_code.model).toBe('claude-opus-4-8')
+    expect(cfg.providers?.claude_code.bypass_permissions).toBe(true)
+  })
 })

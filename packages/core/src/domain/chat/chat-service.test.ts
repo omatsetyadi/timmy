@@ -12,6 +12,7 @@ import { ToolRegistry } from '../tools/tool-registry'
 import { ToolSource } from '../tools/tool-source'
 import { SafeExecution } from '../tools/safe-execution'
 import { PendingConfirmations } from '../tools/confirmations'
+import { ProviderRegistry } from '../llm/provider-registry'
 
 const ConfigStub = Config.Live(`${process.cwd()}/__nope__.yaml`) // defaults
 
@@ -19,9 +20,15 @@ const ConfigStub = Config.Live(`${process.cwd()}/__nope__.yaml`) // defaults
 // so the loop makes a single turn and behaves exactly like the foundation.
 // ToolRegistry.Live now also depends on CredentialStore (per-plugin credential scoping),
 // so provide it here too — with no tools registered, nothing ever reads from it.
+// Task 11: include a ProviderRegistry stub (empty pool) so ChatService.Live's new
+// ProviderRegistry requirement is satisfied without touching every individual test.
 const EmptyToolsLayer = Layer.mergeAll(
   ToolRegistry.Live.pipe(Layer.provide(ToolSource.empty), Layer.provide(CredentialStore.Live)),
   SafeExecution.Live.pipe(Layer.provide(PendingConfirmations.Live)),
+  Layer.succeed(
+    ProviderRegistry,
+    ProviderRegistry.of({ pool: Effect.succeed([]), refresh: Effect.succeed([]) }),
+  ),
 )
 const saved: { role: string; content: string }[] = []
 const ThreadStub = Layer.succeed(
@@ -247,6 +254,10 @@ it.live('runs the tool-loop: tool_call -> execute -> continue -> content', () =>
             ]),
             RegistryStub,
             SafeExecution.Live.pipe(Layer.provide(PendingConfirmations.Live)),
+            Layer.succeed(
+              ProviderRegistry,
+              ProviderRegistry.of({ pool: Effect.succeed([]), refresh: Effect.succeed([]) }),
+            ),
           ),
         ),
       ),
@@ -295,6 +306,10 @@ it.live('stops at MAX_TOOL_ITERATIONS, emitting an error chunk', () =>
               }),
             ),
             SafeExecution.Live.pipe(Layer.provide(PendingConfirmations.Live)),
+            Layer.succeed(
+              ProviderRegistry,
+              ProviderRegistry.of({ pool: Effect.succeed([]), refresh: Effect.succeed([]) }),
+            ),
           ),
         ),
       ),
@@ -381,6 +396,10 @@ it.live('confirm flow: emits confirm_required, resolves, then tool runs + conten
             ]),
             RegistryStub,
             SafeExecution.Live.pipe(Layer.provideMerge(PendingConfirmations.Live)),
+            Layer.succeed(
+              ProviderRegistry,
+              ProviderRegistry.of({ pool: Effect.succeed([]), refresh: Effect.succeed([]) }),
+            ),
           ),
         ),
       ),
@@ -440,6 +459,10 @@ it.live(
               ]),
               RegistryStub,
               SafeExecution.Live.pipe(Layer.provideMerge(PendingConfirmations.Live)),
+              Layer.succeed(
+                ProviderRegistry,
+                ProviderRegistry.of({ pool: Effect.succeed([]), refresh: Effect.succeed([]) }),
+              ),
             ),
           ),
         ),

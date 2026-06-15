@@ -11,6 +11,12 @@ export class ApiError extends Data.TaggedError('timmy/llm/ApiError')<{
   readonly cause?: unknown
 }> {}
 
+export class AuthError extends Data.TaggedError('timmy/llm/AuthError')<{
+  readonly message: string
+  readonly provider?: string
+  readonly cause?: unknown
+}> {}
+
 export class RateLimitError extends Data.TaggedError('timmy/llm/RateLimitError')<{
   readonly message: string
   readonly resetsAt?: number
@@ -23,4 +29,4 @@ export class StreamParsingError extends Data.TaggedError('timmy/llm/StreamParsin
   readonly cause?: unknown
 }> {}
 
-export type LlmError = NetworkError | ApiError | RateLimitError | StreamParsingError
+export type LlmError = NetworkError | ApiError | AuthError | RateLimitError | StreamParsingError

@@ -8,6 +8,7 @@ import type { StreamChunk, ToolCallChunk } from '../llm/stream-chunk'
 import type { LlmError } from '../llm/errors'
 import { ChatValidationError, type ChatError } from './errors'
 import { buildMessages } from './prompt'
+import { ProviderRegistry } from '../llm/provider-registry'
 
 export interface SendParams {
   message: string
@@ -36,6 +37,7 @@ export class ChatService extends Context.Tag('timmy/chat/service')<
       const llm = yield* LlmClient
       const registry = yield* ToolRegistry
       const safeExec = yield* SafeExecution
+      const providerRegistry = yield* ProviderRegistry
 
       const send = (p: SendParams) =>
         Effect.gen(function* () {
@@ -48,7 +50,15 @@ export class ChatService extends Context.Tag('timmy/chat/service')<
             : false
           const threadId = exists && p.threadId ? p.threadId : yield* store.createThread()
           const history = yield* store.getMessages(threadId).pipe(Effect.orElseSucceed(() => []))
-          const messages = buildMessages(config, history, p.message)
+          const pool = yield* providerRegistry.pool
+          const claudeAvailable = config.providers?.claude_code !== undefined
+          const messages = buildMessages(
+            config,
+            history,
+            p.message,
+            pool.map((t) => t.id),
+            claudeAvailable,
+          )
           yield* store.addMessage(threadId, 'user', p.message)
 
           const tools = registry.toModelTools()
@@ -115,8 +125,23 @@ export class ChatService extends Context.Tag('timmy/chat/service')<
                   return
                 }
 
-                // Execute each accumulated tool call in order, feeding results back.
-                const next: ChatMessage[] = [...convo]
+                // Feed results back as a PROPER tool round: one assistant message carrying
+                // ALL this turn's tool_calls, then one tool-result message per call keyed by
+                // its id. Strict cloud APIs (OpenAI/DeepSeek) return 400 on a tool message
+                // lacking a matching assistant tool_calls + tool_call_id (Ollama tolerated the
+                // old `[tool_call X]` text form; cloud frontdesks do not).
+                const next: ChatMessage[] = [
+                  ...convo,
+                  {
+                    role: 'assistant',
+                    content: '',
+                    tool_calls: collected.map((c) => ({
+                      id: c.id,
+                      name: c.name,
+                      arguments: c.arguments,
+                    })),
+                  },
+                ]
                 for (const call of collected) {
                   const args = yield* parseArgs(call.arguments)
                   const tool = registry.list().find((t) => t.name === call.name)
@@ -149,8 +174,11 @@ export class ChatService extends Context.Tag('timmy/chat/service')<
                             ),
                       )
                     : { ok: false, error: `unknown tool ${call.name}` }
-                  next.push({ role: 'assistant', content: `[tool_call ${call.name}]` })
-                  next.push({ role: 'tool', content: JSON.stringify(result) })
+                  next.push({
+                    role: 'tool',
+                    content: JSON.stringify(result),
+                    tool_call_id: call.id,
+                  })
                 }
 
                 // Loop with the extended history.

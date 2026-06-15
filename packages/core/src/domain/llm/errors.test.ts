@@ -1,7 +1,7 @@
 import { it } from '@effect/vitest'
 import { Effect, Either } from 'effect'
-import { expect } from 'vitest'
-import { RateLimitError } from './errors'
+import { expect, it as itV } from 'vitest'
+import { AuthError, RateLimitError } from './errors'
 
 it.effect('RateLimitError carries tag + fields', () =>
   Effect.gen(function* () {
@@ -15,3 +15,9 @@ it.effect('RateLimitError carries tag + fields', () =>
     }
   }),
 )
+
+itV('AuthError carries a message and provider, is a tagged error', () => {
+  const e = new AuthError({ message: 'no api key', provider: 'deepseek' })
+  expect(e._tag).toBe('timmy/llm/AuthError')
+  expect(e.provider).toBe('deepseek')
+})

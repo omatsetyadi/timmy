@@ -14,9 +14,25 @@ export interface AssistantConfig {
   personality: string
   language: { proactive: string; conversation: string; supported: string[] }
 }
+export type ProviderKind = 'ollama' | 'openai-compat' | 'claude-code'
+export interface ProviderConfig {
+  kind: ProviderKind
+  base_url?: string
+  /** claude-code only: which Claude model askClaude runs on (e.g. claude-opus-4-8 for hard
+   *  agentic work, claude-haiku-4-5 for cheap/fast). Defaults to DEFAULT_CLAUDE_MODEL. */
+  model?: string
+  /** claude-code only: "auto mode" — let Claude Code use ANY tool with NO restriction
+   *  (SDK `permissionMode: 'bypassPermissions'`) instead of the scoped allowlist. Off by
+   *  default; the scoped allowlist (Read/Glob/Grep/Bash/Edit/Write) is the safe default. */
+  bypass_permissions?: boolean
+}
+export interface ReasoningConfig {
+  default?: string // "<provider>/<model>"
+}
 export interface TimmyConfig {
   server: { host: string; port: number; auth: { enabled: boolean; token: 'keychain' | string } }
-  models: { frontdesk: FrontdeskConfig }
+  models: { frontdesk: FrontdeskConfig; reasoning?: ReasoningConfig }
+  providers?: Record<string, ProviderConfig>
   assistant: AssistantConfig
 }
 
@@ -50,7 +66,11 @@ function loadConfig(path: string): TimmyConfig {
       ...f.server,
       auth: { ...DEFAULTS.server.auth, ...f.server?.auth },
     },
-    models: { frontdesk: { ...DEFAULTS.models.frontdesk, ...f.models?.frontdesk } },
+    models: {
+      frontdesk: { ...DEFAULTS.models.frontdesk, ...f.models?.frontdesk },
+      ...(f.models?.reasoning ? { reasoning: f.models.reasoning } : {}),
+    },
+    ...(f.providers ? { providers: f.providers } : {}),
     assistant: {
       ...DEFAULTS.assistant,
       ...f.assistant,

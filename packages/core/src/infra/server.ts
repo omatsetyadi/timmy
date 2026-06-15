@@ -2,11 +2,13 @@ import { Cause, Effect, Either, Fiber, ManagedRuntime, Option, Stream } from 'ef
 import Fastify, { type FastifyInstance } from 'fastify'
 import { Server as SocketIOServer } from 'socket.io'
 import { ChatService } from '../domain/chat/chat-service'
-import type { TimmyConfig } from '../domain/config/config'
+import { Config, type TimmyConfig } from '../domain/config/config'
 import { CredentialStore } from '../domain/credentials/credential-store'
 import { LlmClient } from '../domain/llm/llm-client'
+import { ProviderRegistry } from '../domain/llm/provider-registry'
 import { ThreadStore } from '../domain/persistence/thread-store'
 import { PendingConfirmations } from '../domain/tools/confirmations'
+import { statusReport } from './model-cli'
 
 /** Keychain account holding the server's bearer token. */
 const AUTH_TOKEN_KEY = 'server:auth_token'
@@ -17,7 +19,14 @@ const PUBLIC_ROUTES = new Set(['/health'])
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost'])
 
 /** The services the routes resolve from the runtime. */
-type AppServices = ChatService | ThreadStore | LlmClient | CredentialStore | PendingConfirmations
+type AppServices =
+  | ChatService
+  | ThreadStore
+  | LlmClient
+  | CredentialStore
+  | PendingConfirmations
+  | Config
+  | ProviderRegistry
 
 /**
  * Build the timmy-core HTTP + WebSocket server. Caller calls `.listen()`.
@@ -43,6 +52,8 @@ export async function buildServer(
       capabilities,
     }
   })
+
+  app.get('/models/status', async () => runtime.runPromise(statusReport))
 
   app.get('/threads', async () => {
     const threads = await runtime.runPromise(
