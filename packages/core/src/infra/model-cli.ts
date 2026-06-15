@@ -116,11 +116,13 @@ export const registerKnownProvider = (provider: string): boolean => {
   return true
 }
 
-/** Store a search-provider API key under `search:<provider>:api_key` (e.g. Tavily for webSearch). */
-export const setSearchKey = (provider: string, key: string) =>
+/** Store a plugin credential under the `<plugin>:<key>` keychain convention — exactly what a
+ *  plugin's scoped `ctx.credentials.get(key)` reads (tool-registry resolves `${plugin}:${key}`).
+ *  This is how a user sets any plugin's API key, e.g. `timmy plugin set-key web tavily_api_key`. */
+export const setPluginKey = (plugin: string, key: string, value: string) =>
   Effect.gen(function* () {
     const creds = yield* CredentialStore
-    yield* creds.set(`search:${provider}:api_key`, key)
+    yield* creds.set(`${plugin}:${key}`, value)
   })
 
 /** A discovered model. `capabilities` is present ONLY when we know it for real — i.e. Ollama

@@ -8,6 +8,7 @@ import {
   isGithubSource,
   listInstalled,
   parseGithubSource,
+  readInstalledManifest,
   remove,
 } from './plugin-cli'
 
@@ -173,6 +174,26 @@ describe('parseGithubSource', () => {
   it('throws on a non-GitHub source', () => {
     expect(() => parseGithubSource('not-a-source')).toThrow(/GitHub source/)
     expect(() => parseGithubSource('https://gitlab.com/u/r')).toThrow(/GitHub source/)
+  })
+})
+
+describe('readInstalledManifest', () => {
+  it('reads name + tools + credential keys from a built plugin', async () => {
+    const dir = join(mkdtempSync(join(tmpdir(), 'pm-')), 'web')
+    mkdirSync(join(dir, 'dist'), { recursive: true })
+    writeFileSync(
+      join(dir, 'dist', 'index.js'),
+      `module.exports.default = { name: 'web', tools: [{name:'webSearch'},{name:'fetchUrl'}], credentials: [{key:'tavily_api_key'}] }`,
+    )
+    expect(await readInstalledManifest(dir)).toEqual({
+      name: 'web',
+      tools: ['webSearch', 'fetchUrl'],
+      credentialKeys: ['tavily_api_key'],
+    })
+  })
+
+  it('returns null when there is no built entry', async () => {
+    expect(await readInstalledManifest(mkdtempSync(join(tmpdir(), 'pm-')))).toBeNull()
   })
 })
 

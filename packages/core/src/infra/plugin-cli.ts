@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { cpSync, existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 /** Derive a plugin's install name from a source path, robust to a trailing slash:
  *  `installLocal('./foo/')` and `installLocal('./foo')` both yield `foo`. */
@@ -51,6 +52,42 @@ export function remove(pluginsDir: string, name: string): boolean {
  *  (`dist/index.js` — preferred — or a bare `index.js`). */
 export function hasBuiltEntry(src: string): boolean {
   return existsSync(join(src, 'dist', 'index.js')) || existsSync(join(src, 'index.js'))
+}
+
+/** Unwrap a plugin's default export across module formats (mirrors PluginLoader's interop). */
+function extractDefault(mod: unknown): unknown {
+  const d = (mod as { default?: unknown } | null)?.default
+  if (d && typeof d === 'object' && 'default' in (d as object)) {
+    return (d as { default: unknown }).default
+  }
+  return d ?? mod
+}
+
+/** Load an installed plugin's manifest — its name, tool names, and **declared credential keys** —
+ *  so the CLI can tell the user what an installed plugin needs (and the exact set-key command).
+ *  Returns null if it can't be read; never throws (it's a display nicety, not a gate). */
+export async function readInstalledManifest(
+  pluginDir: string,
+): Promise<{ name: string; tools: string[]; credentialKeys: string[] } | null> {
+  const entry = existsSync(join(pluginDir, 'dist', 'index.js'))
+    ? join(pluginDir, 'dist', 'index.js')
+    : join(pluginDir, 'index.js')
+  if (!existsSync(entry)) return null
+  try {
+    const p = extractDefault(await import(pathToFileURL(entry).href)) as {
+      name?: unknown
+      tools?: { name?: unknown }[]
+      credentials?: { key?: unknown }[]
+    } | null
+    if (!p || typeof p !== 'object') return null
+    return {
+      name: String(p.name ?? ''),
+      tools: Array.isArray(p.tools) ? p.tools.map((t) => String(t.name)) : [],
+      credentialKeys: Array.isArray(p.credentials) ? p.credentials.map((c) => String(c.key)) : [],
+    }
+  } catch {
+    return null
+  }
 }
 
 /** Recognize any supported GitHub source: the `github:` shorthand, an https/http GitHub URL

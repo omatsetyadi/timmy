@@ -16,11 +16,12 @@ import {
   installLocal,
   isGithubSource,
   listInstalled,
+  readInstalledManifest,
   remove,
 } from './plugin-cli'
 import {
   setKey,
-  setSearchKey,
+  setPluginKey,
   registerKnownProvider,
   statusReport,
   setFrontdeskConfig,
@@ -70,11 +71,49 @@ async function status(): Promise<void> {
   }
 }
 
-/** `timmy plugin <install <path>|list|remove <name>>` — synchronous fs + console work,
- *  no Effect runtime needed. Plugins live under `<CONFIG_DIR>/plugins/`. */
-function plugin(args: readonly string[]): void {
+/** `timmy plugin <install <path>|list|remove <name>|set-key <plugin> <key>>`. install/list/remove
+ *  are synchronous fs work; set-key needs the runtime (keychain). Plugins live under
+ *  `<CONFIG_DIR>/plugins/`. */
+/** After install, surface what the plugin gives you (tools) and what it NEEDS (declared API
+ *  keys) + the exact set-key command — so a key requirement is discoverable, not buried. */
+async function reportInstalled(pluginsDir: string, installedDir: string): Promise<void> {
+  const m = await readInstalledManifest(join(pluginsDir, installedDir))
+  if (!m) return
+  if (m.tools.length) console.log(`  tools: ${m.tools.join(', ')}`)
+  if (m.credentialKeys.length) {
+    console.log(`  needs API key${m.credentialKeys.length > 1 ? 's' : ''} — set with:`)
+    for (const k of m.credentialKeys) console.log(`    timmy plugin set-key ${m.name} ${k}`)
+  }
+}
+
+async function plugin(args: readonly string[]): Promise<void> {
   const pluginsDir = join(CONFIG_DIR, 'plugins')
   const sub = args[0]
+
+  // Set a plugin's API key under the `<plugin>:<key>` convention its scoped credentials read.
+  if (sub === 'set-key') {
+    const pluginName = args[1]
+    const credKey = args[2]
+    if (!pluginName || !credKey) {
+      console.error('Usage: timmy plugin set-key <plugin> <key>   (e.g. web tavily_api_key)')
+      process.exit(1)
+    }
+    const value = await new Promise<string>((resolve) => {
+      const rl = createInterface({ input: process.stdin, output: process.stdout })
+      rl.question(`Paste the value for '${pluginName}:${credKey}' and press Enter:\n`, (a) => {
+        rl.close()
+        resolve(a.trim())
+      })
+    })
+    const { runtime } = buildRuntime()
+    try {
+      await runtime.runPromise(setPluginKey(pluginName, credKey, value))
+      console.log(`stored '${pluginName}:${credKey}'   (restart Timmy to apply)`)
+    } finally {
+      await runtime.dispose()
+    }
+    return
+  }
 
   if (sub === 'install') {
     const src = args[1]
@@ -89,6 +128,7 @@ function plugin(args: readonly string[]): void {
     if (isGithubSource(src)) {
       const name = installFromGithub(src, pluginsDir)
       console.log(`installed '${name}' from ${src} → ${join(pluginsDir, name)}`)
+      await reportInstalled(pluginsDir, name)
       return
     }
     // Any OTHER scheme (npm:, file:, a non-GitHub git host, …) is unsupported. RFC-3986 scheme
@@ -108,12 +148,21 @@ function plugin(args: readonly string[]): void {
     }
     const name = installLocal(src, pluginsDir)
     console.log(`installed '${name}' → ${join(pluginsDir, name)}`)
+    await reportInstalled(pluginsDir, name)
     return
   }
 
   if (sub === 'list') {
     const names = listInstalled(pluginsDir)
-    console.log(names.length === 0 ? 'no plugins installed' : names.join('\n'))
+    if (names.length === 0) {
+      console.log('no plugins installed')
+      return
+    }
+    for (const n of names) {
+      const m = await readInstalledManifest(join(pluginsDir, n))
+      const needs = m && m.credentialKeys.length ? `  (needs: ${m.credentialKeys.join(', ')})` : ''
+      console.log(`${n}${needs}`)
+    }
     return
   }
 
@@ -131,7 +180,9 @@ function plugin(args: readonly string[]): void {
     return
   }
 
-  console.error('Usage: timmy plugin <install <path>|list|remove <name>>')
+  console.error(
+    'Usage: timmy plugin <install <path|github-url>|list|remove <name>|set-key <plugin> <key>>',
+  )
   process.exit(1)
 }
 
@@ -248,30 +299,6 @@ async function model(args: readonly string[]): Promise<void> {
       )
       process.exit(1)
     }
-  } finally {
-    await runtime.dispose()
-  }
-}
-
-/** `timmy search set-key <provider>` — store a web-search provider key (e.g. tavily) in the keychain. */
-async function search(args: readonly string[]): Promise<void> {
-  const provider = args[1]
-  if (args[0] !== 'set-key' || !provider) {
-    console.error('Usage: timmy search set-key <provider>   (e.g. tavily)')
-    process.exit(1)
-  }
-  const { runtime } = buildRuntime()
-  try {
-    // read the key from stdin (on Enter) so it never lands in shell history
-    const key = await new Promise<string>((resolve) => {
-      const rl = createInterface({ input: process.stdin, output: process.stdout })
-      rl.question(`Paste the API key for search provider '${provider}' and press Enter:\n`, (a) => {
-        rl.close()
-        resolve(a.trim())
-      })
-    })
-    await runtime.runPromise(setSearchKey(provider, key))
-    console.log(`stored search key for '${provider}'   (restart Timmy to apply)`)
   } finally {
     await runtime.dispose()
   }
@@ -428,9 +455,10 @@ Core:
   version, --version, -v             Print the version
 
 Plugins:
-  plugin install <path|github-url>         Install a plugin (local dir, github:user/repo, or a github.com URL)
+  plugin install <path|github-url>   Install a plugin (local dir, github:user/repo, or a github.com URL)
   plugin list                        List installed plugins
   plugin remove <name>               Remove an installed plugin
+  plugin set-key <plugin> <key>      Store a plugin API key (reads stdin), e.g. \`plugin set-key web tavily_api_key\`
 
 Models (cloud + local LLM providers):
   model set-key <provider>           Store a provider API key in the keychain (reads stdin)
@@ -453,9 +481,6 @@ Permissions (allow / ask / block — safe runs, risky asks, blocked is off):
   Note: askClaude (agentic Claude Code) needs the \`claude\` CLI installed + logged in
   (\`claude auth status\`; \`model status\` shows availability + auto-mode state).
 
-Web search:
-  search set-key <provider>          Store a web-search API key (e.g. \`search set-key tavily\`)
-
 Config: ~/.timmy/config.yaml   ·   Plugins: ~/.timmy/plugins/`)
 }
 
@@ -465,11 +490,10 @@ export function run(): void {
   else if (cmd === 'init') void init()
   else if (cmd === 'chat') void chat(process.argv.slice(3))
   else if (cmd === 'status') void status()
-  else if (cmd === 'plugin') plugin(process.argv.slice(3))
+  else if (cmd === 'plugin') void plugin(process.argv.slice(3))
   else if (cmd === 'model') void model(process.argv.slice(3))
   else if (cmd === 'permission') permission(process.argv.slice(3))
   else if (cmd === 'yolo') yolo(process.argv.slice(3))
-  else if (cmd === 'search') void search(process.argv.slice(3))
   else if (cmd === 'version' || cmd === '--version' || cmd === '-v')
     console.log(`Timmy v${VERSION}`)
   else if (cmd === 'help' || cmd === '--help' || cmd === '-h' || cmd === undefined) printHelp()

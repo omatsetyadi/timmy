@@ -12,7 +12,6 @@ import { resolveModelCapabilities } from '../llm/capabilities'
 import { readFile } from 'node:fs/promises'
 import type { StreamChunk } from '../llm/stream-chunk'
 import { buildRunCommandTool } from './run-command-tool'
-import { buildWebSearchTool, buildFetchUrlTool, TAVILY_KEY } from './web-search-tool'
 import { ToolSource } from './tool-source'
 
 const apiKeyKey = (provider: string) => `model:${provider}:api_key`
@@ -82,11 +81,8 @@ export const CoreToolSource = Layer.effect(
     // The direct terminal tool — the cheap, always-available path (no Claude needed). Its
     // per-command permission is decided by the classifier + resolver, not the static tier.
     const runCommand = buildRunCommandTool()
-    // Web search + page fetch (Tavily). Key read directly from the store (core tools are inside
-    // the trust boundary); no key → the tool tells the user to run `timmy search set-key`.
-    const tavilyKey = () => Effect.runPromise(creds.get(TAVILY_KEY))
-    const webSearch = buildWebSearchTool(tavilyKey)
-    const fetchUrl = buildFetchUrlTool(tavilyKey)
+    // Web search/fetch moved out to `timmy-plugin-web` (libs+plugins realignment). Install it:
+    // `timmy plugin install github:omatsetyadi/timmy-plugin-web` + `timmy plugin set-key web tavily_api_key`.
     // Vision: routes a local image to the configured vision model (models.vision.default).
     const askVision = buildAskVisionTool({
       resolveTarget,
@@ -116,7 +112,7 @@ export const CoreToolSource = Layer.effect(
         fetch(url, { method: 'POST', headers, body: JSON.stringify(body) }),
     })
     return {
-      tools: [askModel, runCommand, webSearch, fetchUrl, askVision, ...askClaudeTool],
+      tools: [askModel, runCommand, askVision, ...askClaudeTool],
       credentialScopeByTool: new Map(),
     }
   }),
