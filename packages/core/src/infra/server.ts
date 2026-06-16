@@ -8,7 +8,9 @@ import { LlmClient } from '../domain/llm/llm-client'
 import { ProviderRegistry } from '../domain/llm/provider-registry'
 import { ThreadStore } from '../domain/persistence/thread-store'
 import { PendingConfirmations } from '../domain/tools/confirmations'
+import { mergeOverlay, PermissionOverlay } from '../domain/tools/permission-overlay'
 import { statusReport } from './model-cli'
+import { addAllowedCommand, setMode, setOverride } from './permission-cli'
 
 /** Keychain account holding the server's bearer token. */
 const AUTH_TOKEN_KEY = 'server:auth_token'
@@ -25,6 +27,7 @@ type AppServices =
   | LlmClient
   | CredentialStore
   | PendingConfirmations
+  | PermissionOverlay
   | Config
   | ProviderRegistry
 
@@ -138,12 +141,70 @@ export async function buildServer(
   // onRequest hook since it is NOT in PUBLIC_ROUTES.
   app.post('/confirm/:id', async (req, reply) => {
     const { id } = req.params as { id: string }
-    const body = (req.body ?? {}) as { allowed?: boolean }
+    const { decision } = (req.body ?? {}) as { decision?: 'once' | 'always' | 'deny' }
+    if (decision === 'always') {
+      const always = await runtime.runPromise(
+        PendingConfirmations.pipe(Effect.flatMap((p) => p.peek(id))),
+      )
+      if (always) {
+        if (always.scope === 'command') {
+          await runtime.runPromise(
+            PermissionOverlay.pipe(Effect.flatMap((o) => o.allowCommand(always.signature))),
+          )
+          addAllowedCommand(always.signature)
+        } else {
+          await runtime.runPromise(
+            PermissionOverlay.pipe(Effect.flatMap((o) => o.setOverride(always.tool, 'allow'))),
+          )
+          setOverride('tool', always.tool, 'allow')
+        }
+      }
+    }
+    const allowed = decision === 'always' || decision === 'once'
     const resolved = await runtime.runPromise(
-      PendingConfirmations.pipe(Effect.flatMap((p) => p.resolve(id, body.allowed === true))),
+      PendingConfirmations.pipe(Effect.flatMap((p) => p.resolve(id, allowed))),
     )
     if (!resolved) return reply.code(404).send({ resolved: false })
     return reply.code(200).send({ resolved: true })
+  })
+
+  // Live permission posture for the TUI: the boot config merged with the session overlay.
+  app.get('/permissions', async () => {
+    const [cfg, ov] = await runtime.runPromise(
+      Effect.all([
+        Config.pipe(Effect.flatMap((c) => c.get)),
+        PermissionOverlay.pipe(Effect.flatMap((o) => o.get)),
+      ]),
+    )
+    return mergeOverlay(cfg.permissions, ov)
+  })
+
+  // Mutate the posture: set the mode, a tool/plugin override, or add an allowed command.
+  // Updates the live overlay AND writes through to config.yaml for persistence.
+  app.post('/permissions', async (req, reply) => {
+    const body = (req.body ?? {}) as
+      | { mode: 'default' | 'yolo' }
+      | { kind: 'tool' | 'plugin'; name: string; perm: 'allow' | 'ask' | 'block' }
+      | { allowCommand: string }
+    if ('mode' in body) {
+      await runtime.runPromise(PermissionOverlay.pipe(Effect.flatMap((o) => o.setMode(body.mode))))
+      setMode(body.mode)
+    } else if ('allowCommand' in body) {
+      await runtime.runPromise(
+        PermissionOverlay.pipe(Effect.flatMap((o) => o.allowCommand(body.allowCommand))),
+      )
+      addAllowedCommand(body.allowCommand)
+    } else if ('kind' in body) {
+      // The overlay tracks tool-keyed overrides only; a kind:'plugin' override still persists to
+      // config (effective next boot) but has no live overlay effect — an accepted v1 limitation.
+      await runtime.runPromise(
+        PermissionOverlay.pipe(Effect.flatMap((o) => o.setOverride(body.name, body.perm))),
+      )
+      setOverride(body.kind, body.name, body.perm)
+    } else {
+      return reply.code(400).send({ error: 'unknown permission mutation' })
+    }
+    return reply.code(200).send({ ok: true })
   })
 
   // WebSocket for voice/dashboard streaming (real handlers arrive later).

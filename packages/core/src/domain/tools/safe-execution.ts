@@ -11,6 +11,7 @@ export type EmitConfirm = (req: {
   id: string
   tool: string
   description: string
+  always: { scope: 'command' | 'tool'; label: string }
 }) => Effect.Effect<void>
 
 /** A preview of what a tool call will actually do — shown in the confirm prompt so the user
@@ -21,6 +22,20 @@ export const confirmDescription = (args: Record<string, unknown>): string => {
   const trunc = (s: string): string => (s.length > 600 ? s.slice(0, 600) + '…' : s)
   return entries.map(([k, v]) => `${k}: ${trunc(String(v))}`).join('\n')
 }
+
+/** The persistence target for an "always allow" decision on a tool call. */
+export type AlwaysPayload =
+  | { scope: 'command'; signature: string }
+  | { scope: 'tool'; tool: string }
+
+/** Command scope when the tool yields a signature (runCommand); else tool scope. */
+export function computeAlways(tool: Tool, args: Record<string, unknown>): AlwaysPayload {
+  const sig = tool.allowSignature?.(args) ?? null
+  return sig ? { scope: 'command', signature: sig } : { scope: 'tool', tool: tool.name }
+}
+
+export const alwaysLabel = (p: AlwaysPayload): string =>
+  p.scope === 'command' ? p.signature : p.tool
 
 export class SafeExecution extends Context.Tag('timmy/tools/safe-execution')<
   SafeExecution,
@@ -64,8 +79,14 @@ export class SafeExecution extends Context.Tag('timmy/tools/safe-execution')<
             if (permission === Permission.ALLOW) return yield* execute()
             // ask: emit the prompt, then wait INDEFINITELY for the human's decision (Model A —
             // no timeout). `ensuring(remove)` drops the pending entry on a decision OR interrupt.
-            const deferred = yield* pending.create(id)
-            yield* emitConfirm({ id, tool: tool.name, description: confirmDescription(args) })
+            const always = computeAlways(tool, args)
+            const deferred = yield* pending.create(id, always)
+            yield* emitConfirm({
+              id,
+              tool: tool.name,
+              description: confirmDescription(args),
+              always: { scope: always.scope, label: alwaysLabel(always) },
+            })
             const allowed = yield* Deferred.await(deferred).pipe(
               Effect.ensuring(pending.remove(id)),
             )

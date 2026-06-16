@@ -6,8 +6,31 @@ import type { Tool } from 'timmy-sdk'
 import { Config } from '../config/config'
 import { PendingConfirmations } from './confirmations'
 import { PermissionOverlay } from './permission-overlay'
-import { SafeExecution, confirmDescription } from './safe-execution'
+import { SafeExecution, confirmDescription, computeAlways, alwaysLabel } from './safe-execution'
 import { ToolSource } from './tool-source'
+
+describe('computeAlways / alwaysLabel', () => {
+  const cmdTool = {
+    name: 'runCommand',
+    allowSignature: (a: Record<string, unknown>) =>
+      String(a.command ?? '')
+        .split(/\s+/)
+        .slice(0, 2)
+        .join(' ') || null,
+  } as unknown as Tool
+  const plainTool = { name: 'runAppleScript' } as unknown as Tool
+
+  it('command scope when allowSignature returns a signature', () => {
+    const p = computeAlways(cmdTool, { command: 'git commit -m x' })
+    expect(p).toEqual({ scope: 'command', signature: 'git commit' })
+    expect(alwaysLabel(p)).toBe('git commit')
+  })
+  it('tool scope when allowSignature is absent or null', () => {
+    const p = computeAlways(plainTool, { script: 'tell app' })
+    expect(p).toEqual({ scope: 'tool', tool: 'runAppleScript' })
+    expect(alwaysLabel(p)).toBe('runAppleScript')
+  })
+})
 
 describe('confirmDescription', () => {
   it('shows the actual args (so the user sees the real command/script)', () => {

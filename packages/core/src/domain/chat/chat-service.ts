@@ -194,6 +194,7 @@ export class ChatService extends Context.Tag('timmy/chat/service')<
                               id: req.id,
                               tool: req.tool,
                               description: req.description,
+                              always: req.always,
                             }),
                           ),
                         () =>

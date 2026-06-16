@@ -36,7 +36,6 @@ import {
   writeInitConfig,
   type InitChoices,
 } from './model-cli'
-import { runChat } from './chat-repl'
 import { addAllowedCommand, setMode, setOverride } from './permission-cli'
 import { buildRuntime } from './runtime'
 import { buildServer } from './server'
@@ -368,6 +367,10 @@ function yolo(args: readonly string[]): void {
 async function chat(args: readonly string[]): Promise<void> {
   const i = args.indexOf('--thread')
   const threadArg = i >= 0 ? args[i + 1] : undefined
+  // The Ink TUI ships as a tsup ESM bundle (Ink is ESM-only w/ top-level await; a static import
+  // would crash the CJS build). Load it via dynamic import() at runtime.
+  const appModule = './chat-tui/app.mjs'
+  const { runChat } = (await import(appModule)) as typeof import('./chat-tui/app')
   await runChat({ threadArg })
 }
 

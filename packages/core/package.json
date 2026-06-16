@@ -8,7 +8,7 @@
     "timmy": "dist/index.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && tsup",
     "dev": "tsx watch src/index.ts start",
     "start": "node dist/index.js start",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -21,7 +21,10 @@
     "better-sqlite3": "^12.10.1",
     "effect": "^3.21.3",
     "fastify": "^5.8.5",
+    "ink": "^7.0.6",
+    "ink-text-input": "^6.0.0",
     "js-yaml": "^4.2.0",
+    "react": "^19.2.7",
     "socket.io": "^4.8.3",
     "timmy-sdk": "workspace:*"
   },
@@ -29,6 +32,9 @@
     "@effect/vitest": "^0.29.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/js-yaml": "^4.0.9",
+    "@types/react": "^19.2.17",
+    "ink-testing-library": "^4.0.0",
+    "tsup": "^8.5.1",
     "vitest": "^3.2.6"
   }
 }

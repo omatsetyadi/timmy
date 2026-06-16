@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseFrame, renderChunk } from './chat-repl'
+import { parseFrame, renderChunk } from './frames'
 
 describe('parseFrame (NDJSON line → frame)', () => {
   it('reads the opening {thread_id} line', () => {
@@ -12,8 +12,16 @@ describe('parseFrame (NDJSON line → frame)', () => {
 
   it('reads a confirm_required line as its own kind (handled interactively)', () => {
     expect(
-      parseFrame('{"type":"confirm_required","id":"c1","tool":"askClaude","description":"run ls"}'),
-    ).toEqual({ kind: 'confirm', id: 'c1', tool: 'askClaude', description: 'run ls' })
+      parseFrame(
+        '{"type":"confirm_required","id":"c1","tool":"askClaude","description":"run ls","always":{"scope":"tool","label":"x"}}',
+      ),
+    ).toEqual({
+      kind: 'confirm',
+      id: 'c1',
+      tool: 'askClaude',
+      description: 'run ls',
+      always: { scope: 'tool', label: 'x' },
+    })
   })
 
   it('reads a typed StreamChunk line as kind:chunk', () => {
