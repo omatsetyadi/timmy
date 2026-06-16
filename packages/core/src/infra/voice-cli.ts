@@ -1,0 +1,192 @@
+import { load, dump } from 'js-yaml'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { extname, join } from 'node:path'
+import { createInterface } from 'node:readline'
+import { CONFIG_DIR, CONFIG_PATH, readConfigSync, type VoiceConfig } from '../domain/config/config'
+
+export type Raw = Record<string, unknown>
+
+// The wake word is one trained .onnx model in a single canonical slot. Changing it = re-import
+// (paste a new file → it replaces this one). No name picker, no activate, no switch.
+const WAKEWORDS_DIR = join(CONFIG_DIR, 'voice', 'wakewords')
+const WAKE_MODEL = join(WAKEWORDS_DIR, 'wake.tflite')
+const TRAIN_URL = 'https://github.com/dscripka/openWakeWord  ("automatic model training" notebook)'
+
+// ── pure mutation (unit-tested) ───────────────────────────────────────────────
+
+/**
+ * Return `raw` with `voice.<path>` set to `value`, creating nested objects as needed and leaving
+ * every other key intact. Validates (engine ∈ local|openai, rate numeric) and throws on bad input.
+ * `path`: `engine | speaker | rate | openai.<model|voice|instructions>`.
+ */
+export function applyVoiceEdit(raw: Raw, path: string, value: string): Raw {
+  const voice = (raw.voice ??= {}) as { stt?: Raw; tts?: Raw; wake?: Raw }
+  const tts = (voice.tts ??= {}) as { engine?: string; voice?: string; rate?: number; openai?: Raw }
+  switch (path) {
+    case 'engine':
+      if (value !== 'local' && value !== 'openai')
+        throw new Error(`engine must be 'local' or 'openai', got '${value}'`)
+      tts.engine = value
+      break
+    case 'speaker':
+      tts.voice = value
+      break
+    case 'rate': {
+      const n = parseFloat(value)
+      if (Number.isNaN(n)) throw new Error(`rate must be a number, got '${value}'`)
+      tts.rate = n
+      break
+    }
+    case 'openai.model':
+    case 'openai.voice':
+    case 'openai.instructions': {
+      const field = path.slice('openai.'.length)
+      const openai = (tts.openai ??= {}) as Raw
+      openai[field] = value
+      break
+    }
+    case 'wake.phrase': {
+      // Display-only label for an imported custom model (the file is renamed to a generic slot,
+      // so this records what it actually is). The daemon doesn't read it; status/UI does.
+      const wake = (voice.wake ??= {}) as { word?: string; phrase?: string }
+      wake.phrase = value
+      break
+    }
+    default:
+      throw new Error(`unknown voice setting '${path}'`)
+  }
+  return raw
+}
+
+/**
+ * Validate + copy a trained `.onnx` into the single canonical wake slot, replacing any existing
+ * model. Throws on a non-`.onnx` or missing source. Returns the destination. (The daemon loads
+ * this file; if it is absent it falls back to the bundled pretrained word.)
+ */
+export function importWake(src: string): string {
+  if (extname(src).toLowerCase() !== '.tflite')
+    throw new Error(`wake model must be a .tflite file, got '${src}'`)
+  if (!existsSync(src)) throw new Error(`no such file: ${src}`)
+  mkdirSync(WAKEWORDS_DIR, { recursive: true })
+  copyFileSync(src, WAKE_MODEL) // rename into the canonical slot + replace whatever was there
+  return WAKE_MODEL
+}
+
+// ── yaml IO (mirrors model-cli / profile-cli; js-yaml normalizes, dropping comments) ──
+
+const loadRaw = (): Raw => {
+  if (!existsSync(CONFIG_PATH)) return {}
+  try {
+    const v = load(readFileSync(CONFIG_PATH, 'utf8'))
+    return v && typeof v === 'object' ? (v as Raw) : {}
+  } catch {
+    return {}
+  }
+}
+const saveRaw = (raw: Raw): void => {
+  mkdirSync(CONFIG_DIR, { recursive: true }) // first write on a fresh install (no `timmy init` yet)
+  writeFileSync(CONFIG_PATH, dump(raw), 'utf8')
+}
+
+const write = (path: string, value: string): void => saveRaw(applyVoiceEdit(loadRaw(), path, value))
+
+// ── setters (called by the CLI; the daemon reads these exact config paths) ─────
+
+export const setVoiceEngine = (engine: string): void => write('engine', engine)
+export const setVoiceSpeaker = (name: string): void => write('speaker', name)
+export const setVoiceRate = (rate: string): void => write('rate', rate)
+export const setVoiceOpenai = (field: string, value: string): void =>
+  write(`openai.${field}`, value)
+export const setVoiceWakePhrase = (phrase: string): void => write('wake.phrase', phrase)
+
+/** The effective `voice` block (defaults merged with the file) — for `timmy voice status`. */
+export const voiceStatus = (): VoiceConfig => readConfigSync().voice
+
+// ── command ──────────────────────────────────────────────────────────────────
+
+const USAGE = 'Usage: timmy voice <engine|speaker|rate|wake import|openai|status>'
+
+const applied = (msg: string): void => console.log(`${msg}   (restart Timmy to apply)`)
+const fail = (msg: string): never => {
+  console.error(msg)
+  process.exit(1)
+}
+
+/**
+ * (Re)import the wake word — the ONLY way to change it. Two-step prompt over a SINGLE readline
+ * interface (two interfaces on piped stdin would drop the second line): ① path to a trained
+ * `.onnx` → replaces the canonical model; ② a display phrase (e.g. "hey timmy") stored as
+ * `voice.wake.phrase`, since the file is renamed to a generic slot.
+ */
+async function wakeImport(): Promise<void> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout })
+  const ask = (q: string): Promise<string> =>
+    new Promise((resolve) => rl.question(q, (a) => resolve(a.trim())))
+  try {
+    const src = await ask(
+      'Paste the path to your trained .tflite wake-word model and press Enter\n' +
+        `(don't have one? train it free, ~30 min, at ${TRAIN_URL}):\n`,
+    )
+    if (!src) {
+      console.error('no path given')
+      process.exitCode = 1
+      return
+    }
+    importWake(src)
+    const phrase = await ask('What does it say? A short phrase for the UI (e.g. "hey timmy"):\n')
+    if (phrase) setVoiceWakePhrase(phrase)
+    applied(
+      phrase
+        ? `wake model installed — “${phrase}” (replaced the previous one)`
+        : 'wake model installed (replaced the previous one)',
+    )
+  } finally {
+    rl.close()
+  }
+}
+
+/** `timmy voice <engine|speaker|rate|wake|openai|status>` — manage the `voice:` config block the
+ *  voice daemon reads. Config-only, except `wake` which (re)imports the trained model file. */
+export async function voice(args: readonly string[]): Promise<void> {
+  const sub = args[0]
+  try {
+    switch (sub) {
+      case 'engine': {
+        const v = args[1]
+        if (!v) return fail('Usage: timmy voice engine <local|openai>')
+        setVoiceEngine(v)
+        return applied(`voice.tts.engine → ${v}`)
+      }
+      case 'speaker': {
+        const v = args[1]
+        if (!v) return fail('Usage: timmy voice speaker <name>   (local English Kokoro voice)')
+        setVoiceSpeaker(v)
+        return applied(`voice.tts.voice → ${v}`)
+      }
+      case 'rate': {
+        const v = args[1]
+        if (!v) return fail('Usage: timmy voice rate <float>   (e.g. 1.0)')
+        setVoiceRate(v)
+        return applied(`voice.tts.rate → ${v}`)
+      }
+      case 'wake':
+        // `wake import` (re)imports the trained model — the only way to change the wake word.
+        if (args[1] === 'import') return wakeImport()
+        return fail('Usage: timmy voice wake import   ((re)import the trained .onnx wake model)')
+      case 'openai': {
+        const field = args[1]
+        const value = args.slice(2).join(' ')
+        if (!field || !value)
+          return fail('Usage: timmy voice openai <voice|model|instructions> <value>')
+        setVoiceOpenai(field, value)
+        return applied(`voice.tts.openai.${field} → ${value}`)
+      }
+      case 'status':
+        return console.log(JSON.stringify(voiceStatus(), null, 2))
+      default:
+        return fail(USAGE)
+    }
+  } catch (e) {
+    fail((e as Error).message)
+  }
+}

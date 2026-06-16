@@ -102,6 +102,49 @@ describe('memory config', () => {
   })
 })
 
+describe('voice config', () => {
+  it('defaults the voice block (stt empty, tts.engine local, wake.word hey_jarvis) when absent', () => {
+    const cfg = readConfigSync('/nonexistent/path/config.yaml') // missing file → DEFAULTS
+    expect(cfg.voice).toEqual({
+      stt: {},
+      tts: { engine: 'local' },
+      wake: { word: 'hey_jarvis' },
+    })
+  })
+
+  it('parses a full voice block (stt, tts + openai, wake)', () => {
+    const path = writeCfg(`
+voice:
+  stt: { engine: faster-whisper, model: small }
+  tts:
+    engine: openai
+    voice: bm_fable
+    rate: 1.1
+    openai: { model: gpt-4o-mini-tts, voice: ash, instructions: "warm, conversational" }
+  wake: { word: hey_timmy }
+`)
+    const v = readConfigSync(path).voice
+    expect(v.stt).toEqual({ engine: 'faster-whisper', model: 'small' })
+    expect(v.tts.engine).toBe('openai')
+    expect(v.tts.voice).toBe('bm_fable')
+    expect(v.tts.rate).toBe(1.1)
+    expect(v.tts.openai).toEqual({
+      model: 'gpt-4o-mini-tts',
+      voice: 'ash',
+      instructions: 'warm, conversational',
+    })
+    expect(v.wake.word).toBe('hey_timmy')
+  })
+
+  it('deep-merges a partial voice block over defaults (set one key, others keep defaults)', () => {
+    const path = writeCfg(`voice:\n  tts: { voice: bm_fable }\n`)
+    const v = readConfigSync(path).voice
+    expect(v.tts.voice).toBe('bm_fable') // set
+    expect(v.tts.engine).toBe('local') // default preserved through the merge
+    expect(v.wake.word).toBe('hey_jarvis') // default preserved
+  })
+})
+
 describe('permissions config', () => {
   it('defaults to { mode: default } when absent', () => {
     const path = writeCfg(`models:\n  frontdesk: { provider: ollama, model: qwen3:14b }\n`)

@@ -39,6 +39,7 @@ import {
 import { addAllowedCommand, setMode, setOverride } from './permission-cli'
 import { memory } from './memory-cli'
 import { profile } from './profile-cli'
+import { voice } from './voice-cli'
 import { buildRuntime } from './runtime'
 import { buildServer } from './server'
 
@@ -577,6 +578,14 @@ Profile (the assistant's identity + your own profile, injected into every system
   profile edit <assistant|user> <field>    Edit a field in $EDITOR
   profile clear <assistant|user> <field>   Unset a field
 
+Voice (settings for the voice daemon; language uses profile's assistant language):
+  voice engine <local|openai>        TTS engine — local = offline, openai = cloud
+  voice speaker <name>               Local English voice (Kokoro, e.g. bm_fable)
+  voice rate <float>                 Local speaking rate (e.g. 1.0)
+  voice wake import                  (Re)import the wake word — prompts: trained .onnx path → display phrase
+  voice openai <voice|model|instructions> <value>   OpenAI TTS settings (when engine=openai)
+  voice status                       Show the effective voice config
+
   Note: askClaude (agentic Claude Code) needs the \`claude\` CLI installed + logged in
   (\`claude auth status\`; \`model status\` shows availability + auto-mode state).
 
@@ -594,6 +603,7 @@ export function run(): void {
   else if (cmd === 'permission') permission(process.argv.slice(3))
   else if (cmd === 'memory') void memory(process.argv.slice(3))
   else if (cmd === 'profile') profile(process.argv.slice(3))
+  else if (cmd === 'voice') void voice(process.argv.slice(3))
   else if (cmd === 'yolo') yolo(process.argv.slice(3))
   else if (cmd === 'version' || cmd === '--version' || cmd === '-v')
     console.log(`Timmy v${VERSION}`)

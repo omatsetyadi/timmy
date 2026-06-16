@@ -59,6 +59,19 @@ export interface PermissionConfig {
   commands?: { allow?: string[] }
 }
 
+/** Voice settings — read by the separate `timmy-voice` Python daemon (over the same config file).
+ *  Keys are a contract with the daemon; do NOT rename. Language stays under `assistant.language`. */
+export interface VoiceConfig {
+  stt: { engine?: string; model?: string }
+  tts: {
+    engine: 'local' | 'openai'
+    voice?: string
+    rate?: number
+    openai?: { model?: string; voice?: string; instructions?: string }
+  }
+  wake: { word: string; phrase?: string }
+}
+
 export interface TimmyConfig {
   server: { host: string; port: number; auth: { enabled: boolean; token: 'keychain' | string } }
   models: {
@@ -72,6 +85,7 @@ export interface TimmyConfig {
   permissions: PermissionConfig
   assistant: AssistantConfig
   user?: UserConfig
+  voice: VoiceConfig
   memory: {
     learning_mode: boolean
     notify_on_learn: boolean
@@ -106,6 +120,11 @@ const DEFAULTS: TimmyConfig = {
     name: 'Timmy',
     personality: DEFAULT_PERSONALITY,
     language: { proactive: 'en', conversation: 'auto', supported: ['en', 'id'] },
+  },
+  voice: {
+    stt: {},
+    tts: { engine: 'local' },
+    wake: { word: 'hey_jarvis' },
   },
   memory: {
     learning_mode: true,
@@ -142,6 +161,20 @@ function loadConfig(path: string): TimmyConfig {
       language: { ...DEFAULTS.assistant.language, ...f.assistant?.language },
     },
     ...(f.user ? { user: f.user } : {}),
+    voice: {
+      ...DEFAULTS.voice,
+      ...f.voice,
+      stt: { ...DEFAULTS.voice.stt, ...f.voice?.stt },
+      tts: {
+        ...DEFAULTS.voice.tts,
+        ...f.voice?.tts,
+        // Only materialize `openai` when the file actually sets it — keeps the default block clean.
+        ...(f.voice?.tts?.openai
+          ? { openai: { ...DEFAULTS.voice.tts.openai, ...f.voice.tts.openai } }
+          : {}),
+      },
+      wake: { ...DEFAULTS.voice.wake, ...f.voice?.wake },
+    },
     memory: { ...DEFAULTS.memory, ...f.memory },
   }
 }
