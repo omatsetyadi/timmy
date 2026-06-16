@@ -9,7 +9,12 @@ export function buildSystemPrompt(
   memoryBlock = '',
 ): string {
   const a = config.assistant
-  let p = a.personality.trim()
+  const u = config.user
+  // Identity comes from config (CLI-editable), not baked into the personality string.
+  let p = `You are ${a.name}, a personal AI assistant.\n\n${a.personality.trim()}`
+  // User-authored response style: a behavior instruction, so it sits with the other behavior rules.
+  const style = u?.style?.trim()
+  if (style) p += `\n\nHow to respond to this user (their preference): ${style}`
   p +=
     a.language.conversation === 'auto'
       ? '\n\nReply in the same language the user writes in. If they switch, switch with them.'
@@ -29,6 +34,14 @@ export function buildSystemPrompt(
       `\n\nFor HEAVY, multi-step, code-related work (refactors, building a feature, complex DB/docker setup, making a ticket PR-ready), ` +
       `call the askClaude tool: Claude Code executes the task with its own tools and reports back. ` +
       `askClaude DOES work; askModel only reasons. Don't use askClaude for something runCommand can do in one command.`
+  }
+  // User-authored "about me": grounding the user wrote themselves (name + bio). Placed after the
+  // behavioral instructions and BEFORE the auto-learned memory block, so the user's own words lead.
+  const userName = u?.name?.trim()
+  const about = u?.about?.trim()
+  if (userName || about) {
+    const namePart = userName ? `Their name is ${userName}.` : ''
+    p += `\n\nAbout the user: ${[namePart, about].filter(Boolean).join(' ')}`
   }
   // Recalled memory subgraph ("What you know about the user"): appended last so it reads as
   // grounding context after the behavioral instructions. Empty block = no append.

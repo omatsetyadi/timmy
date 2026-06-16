@@ -38,6 +38,7 @@ import {
 } from './model-cli'
 import { addAllowedCommand, setMode, setOverride } from './permission-cli'
 import { memory } from './memory-cli'
+import { profile } from './profile-cli'
 import { buildRuntime } from './runtime'
 import { buildServer } from './server'
 
@@ -563,6 +564,19 @@ Memory (the knowledge graph Timmy learns about you):
   memory delete <id>                 Forget an entity
   memory learning <on|off|status>    Toggle whether Timmy learns from conversations
 
+Profile (the assistant's identity + your own profile, injected into every system prompt):
+  profile show                       Show both sections (assistant + you)
+  profile set assistant name <t…>    Rename the assistant (default: Timmy)
+  profile set assistant personality <t…>   Set the assistant's character/voice
+  profile set user name <t…>         Your name (so it can address you)
+  profile set user about <t…>        Who you are (grounding)
+  profile set user style <t…>        How the assistant should respond to you
+  profile set assistant language conversation <auto|English|…>   Reply language (auto = mirror user)
+  profile set assistant language proactive <English|…>           Language for messages it starts
+  profile set assistant language supported <en,id,ja>            Languages it may use (comma list)
+  profile edit <assistant|user> <field>    Edit a field in $EDITOR
+  profile clear <assistant|user> <field>   Unset a field
+
   Note: askClaude (agentic Claude Code) needs the \`claude\` CLI installed + logged in
   (\`claude auth status\`; \`model status\` shows availability + auto-mode state).
 
@@ -579,6 +593,7 @@ export function run(): void {
   else if (cmd === 'model') void model(process.argv.slice(3))
   else if (cmd === 'permission') permission(process.argv.slice(3))
   else if (cmd === 'memory') void memory(process.argv.slice(3))
+  else if (cmd === 'profile') profile(process.argv.slice(3))
   else if (cmd === 'yolo') yolo(process.argv.slice(3))
   else if (cmd === 'version' || cmd === '--version' || cmd === '-v')
     console.log(`Timmy v${VERSION}`)

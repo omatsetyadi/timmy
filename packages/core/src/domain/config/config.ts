@@ -9,10 +9,20 @@ export interface FrontdeskConfig {
   base_url?: string
   model: string
 }
+/** The assistant — its own identity. `name` = what it's called; `personality` = its character/voice. */
 export interface AssistantConfig {
   name: string
   personality: string
   language: { proactive: string; conversation: string; supported: string[] }
+}
+
+/** The user — who the assistant is talking to. User-authored, injected into every system prompt;
+ *  the agent never writes here (distinct from the auto-learned memory graph).
+ *  `name` = the user's name; `about` = who they are (grounding); `style` = how to respond to them. */
+export interface UserConfig {
+  name?: string
+  about?: string
+  style?: string
 }
 export type ProviderKind = 'ollama' | 'openai-compat' | 'claude-code'
 export interface ProviderConfig {
@@ -61,6 +71,7 @@ export interface TimmyConfig {
   providers?: Record<string, ProviderConfig>
   permissions: PermissionConfig
   assistant: AssistantConfig
+  user?: UserConfig
   memory: {
     learning_mode: boolean
     notify_on_learn: boolean
@@ -77,8 +88,10 @@ export interface TimmyConfig {
 export const CONFIG_DIR = join(homedir(), '.timmy')
 export const CONFIG_PATH = join(CONFIG_DIR, 'config.yaml')
 
+// Behavior only — no name. buildSystemPrompt leads with "You are <assistant.name>, a personal
+// AI assistant." so the name is config-driven (and CLI-editable), not baked into this string.
 const DEFAULT_PERSONALITY =
-  `You are Timmy, a personal AI assistant. Talk like a close friend — casual, direct, no corporate tone. ` +
+  `Talk like a close friend — casual, direct, no corporate tone. ` +
   `Skip filler like "Certainly!" or "Great question!". Be concise. If you don't know, say so. Light roast when it fits. ` +
   `Only claim an action succeeded if a tool result confirms it. If there's no tool or native way to do something, ` +
   `say so plainly after a reasonable attempt — don't brute-force the shell over and over.`
@@ -128,6 +141,7 @@ function loadConfig(path: string): TimmyConfig {
       ...f.assistant,
       language: { ...DEFAULTS.assistant.language, ...f.assistant?.language },
     },
+    ...(f.user ? { user: f.user } : {}),
     memory: { ...DEFAULTS.memory, ...f.memory },
   }
 }

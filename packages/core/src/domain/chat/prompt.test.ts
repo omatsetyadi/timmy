@@ -56,6 +56,62 @@ it('omits askClaude when not available', () => {
   expect(buildSystemPrompt(cfg, [], false)).not.toMatch(/askClaude/)
 })
 
+describe('assistant identity (name is live, not hardcoded)', () => {
+  it('leads with the configured name, not a baked-in "Timmy"', () => {
+    const named = {
+      assistant: {
+        name: 'Jarvis',
+        personality: 'Be helpful.',
+        language: { proactive: 'en', conversation: 'auto', supported: ['en'] },
+      },
+    } as TimmyConfig
+    const p = buildSystemPrompt(named, [])
+    expect(p).toMatch(/^You are Jarvis\b/)
+    expect(p).not.toContain('Timmy')
+  })
+})
+
+describe('user profile (name + about + style)', () => {
+  const withUser = (user: { name?: string; about?: string; style?: string }) =>
+    ({
+      assistant: {
+        name: 'Timmy',
+        personality: 'Be Timmy.',
+        language: { proactive: 'en', conversation: 'auto', supported: ['en'] },
+      },
+      user,
+    }) as TimmyConfig
+
+  it('injects style as a response-behavior instruction before the tool guidance', () => {
+    const p = buildSystemPrompt(withUser({ style: 'Be terse and roast me.' }), [])
+    expect(p).toContain('Be terse and roast me.')
+    expect(p.indexOf('Be terse and roast me.')).toBeLessThan(p.indexOf('runCommand'))
+  })
+
+  it('injects about as user grounding, after tool guidance and before the memory block', () => {
+    const block = '## What you know about the user\n- person: Omat'
+    const p = buildSystemPrompt(withUser({ about: 'Engineer at Jitera.' }), [], false, block)
+    expect(p).toContain('Engineer at Jitera.')
+    expect(p.indexOf('Engineer at Jitera.')).toBeGreaterThan(p.indexOf('runCommand'))
+    expect(p.indexOf('Engineer at Jitera.')).toBeLessThan(p.indexOf('What you know about the user'))
+  })
+
+  it("weaves the user's name into the about block", () => {
+    const p = buildSystemPrompt(withUser({ name: 'Omat', about: 'Engineer.' }), [])
+    expect(p).toMatch(/About the user: Their name is Omat\. Engineer\./)
+  })
+
+  it('injects the name even when about is unset', () => {
+    const p = buildSystemPrompt(withUser({ name: 'Omat' }), [])
+    expect(p).toContain('Their name is Omat.')
+  })
+
+  it('omits the about block when user is unset or empty', () => {
+    expect(buildSystemPrompt(withUser({}), [])).not.toContain('About the user')
+    expect(buildSystemPrompt(cfg, [])).not.toContain('About the user')
+  })
+})
+
 describe('recalled memory block', () => {
   const block = '## What you know about the user\n- person: Omat {role: founder}'
   it('appends the memory block to the system message when provided', () => {
