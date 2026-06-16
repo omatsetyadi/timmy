@@ -51,7 +51,13 @@ export interface PermissionConfig {
 
 export interface TimmyConfig {
   server: { host: string; port: number; auth: { enabled: boolean; token: 'keychain' | string } }
-  models: { frontdesk: FrontdeskConfig; reasoning?: ReasoningConfig; vision?: ReasoningConfig }
+  models: {
+    frontdesk: FrontdeskConfig
+    reasoning?: ReasoningConfig
+    vision?: ReasoningConfig
+    embedding?: string
+    memory?: string
+  }
   providers?: Record<string, ProviderConfig>
   permissions: PermissionConfig
   assistant: AssistantConfig
