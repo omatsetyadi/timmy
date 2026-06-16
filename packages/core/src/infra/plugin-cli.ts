@@ -175,3 +175,63 @@ export function installFromGithub(source: string, pluginsDir: string): string {
     rmSync(tmp, { recursive: true, force: true })
   }
 }
+
+/** A first-party plugin `timmy init` offers to install out-of-the-box. `source` is the
+ *  github-install spec (same one `plugin install` takes); `blurb` is the one-line pitch. */
+export interface DefaultPlugin {
+  readonly name: string
+  readonly source: string
+  readonly blurb: string
+}
+
+/** The recommended set a fresh Timmy ships with — so a new install has capabilities, not an
+ *  empty brain. Order = install order. (Vision + reasoning are core; these add hands.) */
+export const DEFAULT_PLUGINS: readonly DefaultPlugin[] = [
+  {
+    name: 'machine',
+    source: 'github:omatsetyadi/timmy-plugin-machine',
+    blurb: 'control macOS apps — AppleScript, app focus, a script library',
+  },
+  {
+    name: 'web',
+    source: 'github:omatsetyadi/timmy-plugin-web',
+    blurb: 'web search + fetch a URL (needs a Tavily API key)',
+  },
+  {
+    name: 'shell',
+    source: 'github:omatsetyadi/timmy-plugin-shell',
+    blurb: 'run shell commands — runCommand, with a safety classifier',
+  },
+]
+
+export interface DefaultInstallResult {
+  readonly name: string
+  readonly ok: boolean
+  readonly error?: string
+}
+
+/** Install each default plugin via the injected `install` (the same github-install path the
+ *  `plugin install` command uses, curried with the plugins dir). Continue-on-failure: one
+ *  plugin's clone/build error is captured and the rest still install — `timmy init` has already
+ *  written the config, so a plugin failure must never abort setup. Returns a per-plugin result
+ *  so the caller can summarize what landed and what to retry. */
+export async function installDefaults(
+  plugins: readonly DefaultPlugin[],
+  install: (plugin: DefaultPlugin) => Promise<void> | void,
+  log: (msg: string) => void,
+): Promise<DefaultInstallResult[]> {
+  const results: DefaultInstallResult[] = []
+  for (const p of plugins) {
+    log(`\n  installing ${p.name} — ${p.blurb}…`)
+    try {
+      await install(p)
+      results.push({ name: p.name, ok: true })
+      log(`  ✓ ${p.name}`)
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e)
+      results.push({ name: p.name, ok: false, error })
+      log(`  ✗ ${p.name} — ${error}\n    retry later: timmy plugin install ${p.source}`)
+    }
+  }
+  return results
+}

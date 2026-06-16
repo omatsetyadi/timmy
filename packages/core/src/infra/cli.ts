@@ -11,7 +11,9 @@ import {
 } from '../domain/config/config'
 import { ProviderRegistry } from '../domain/llm/provider-registry'
 import {
+  DEFAULT_PLUGINS,
   hasBuiltEntry,
+  installDefaults,
   installFromGithub,
   installLocal,
   isGithubSource,
@@ -427,13 +429,84 @@ async function init(): Promise<void> {
         claudeAuthed: env.claudeAuthed,
       }
     }
+    // Track what's already configured so the reasoning/optional steps don't re-ask for it.
+    const configured = new Set<string>(
+      [
+        choices.frontdesk.provider,
+        choices.cloudProvider,
+        choices.claudeAuthed ? 'claude_code' : undefined,
+      ].filter((p): p is string => Boolean(p)),
+    )
+    const extraProviders: string[] = []
+    const addProvider = async (name: string, key: string): Promise<void> => {
+      if (key) await runtime.runPromise(setKey(name, key))
+      if (key && !configured.has(name)) {
+        extraProviders.push(name)
+        configured.add(name)
+      }
+    }
+
+    // ── #3 Reasoning provider (askClaude) — Claude Code is the agentic reasoning engine when
+    //    authed; an Anthropic key is the fallback (askModel / when Claude Code is unavailable).
+    //    'anthropic' base_url auto-resolves at boot.
+    console.log('\n─── Reasoning provider (askClaude) ───')
+    console.log(
+      env.claudeAuthed
+        ? '  ✓ Claude Code — your agentic reasoning engine (askClaude). Add an Anthropic key as a fallback?'
+        : '  Claude Code not detected — reasoning uses your frontdesk model. Add an Anthropic key for reasoning?',
+    )
+    await addProvider('anthropic', await ask('  Anthropic API key (Enter to skip): '))
+
+    // ── #4 Optional providers — extra cloud keys for frontdesk-switching / reasoning fallback.
+    console.log('\n─── Optional providers ───')
+    console.log('  Add other provider keys (openai / gemini / deepseek / …), one at a time.')
+    let askMore = true
+    while (askMore) {
+      const name = (await ask('  Provider name (Enter to finish): ')).toLowerCase()
+      if (!name) askMore = false
+      else if (configured.has(name)) console.log(`    ${name} already configured — skipped`)
+      else await addProvider(name, await ask(`  ${name} API key (Enter to skip): `))
+    }
+
+    choices = { ...choices, extraProviders }
     writeInitConfig(choices)
+    const extraNote = extraProviders.length ? ` · +${extraProviders.join(', ')}` : ''
     console.log(
       `\n✓ wrote ~/.timmy/config.yaml — frontdesk ${choices.frontdesk.provider}/${choices.frontdesk.model}` +
-        (env.claudeAuthed ? ' · claude_code enabled (askClaude)' : ''),
+        (env.claudeAuthed ? ' · claude_code enabled (askClaude)' : '') +
+        extraNote,
     )
+
+    // Default plugins — so a fresh Timmy has hands, not an empty brain. Optional, and
+    // continue-on-failure: the config above is already written, so a clone/build hiccup on one
+    // plugin never aborts setup. Each install reuses the exact `plugin install` github path.
+    const names = DEFAULT_PLUGINS.map((p) => p.name).join(', ')
+    console.log(`\nRecommended plugins (${names}):`)
+    DEFAULT_PLUGINS.forEach((p) => console.log(`  • ${p.name} — ${p.blurb}`))
+    const wantPlugins = await ask('Install them now? (clones + builds each) (Y/n) ')
+    if (wantPlugins.toLowerCase() !== 'n') {
+      const pluginsDir = join(CONFIG_DIR, 'plugins')
+      mkdirSync(pluginsDir, { recursive: true })
+      const results = await installDefaults(
+        DEFAULT_PLUGINS,
+        async (p) => {
+          const dir = installFromGithub(p.source, pluginsDir)
+          await reportInstalled(pluginsDir, dir)
+        },
+        (m) => console.log(m),
+      )
+      const ok = results.filter((r) => r.ok).map((r) => r.name)
+      const failed = results.filter((r) => !r.ok).map((r) => r.name)
+      console.log(
+        `\n  plugins: ${ok.length ? `✓ ${ok.join(', ')}` : 'none installed'}` +
+          (failed.length ? ` · ✗ ${failed.join(', ')} (see above to retry)` : ''),
+      )
+    } else {
+      console.log('  skipped — add later with `timmy plugin install github:<user>/<repo>`')
+    }
+
     console.log(
-      '  Next: `timmy start`  ·  `timmy model status`  ·  add keys: `timmy model set-key <provider>`',
+      '\n  Next: `timmy start`  ·  `timmy model status`  ·  add keys: `timmy model set-key <provider>`',
     )
   } finally {
     rl.close()

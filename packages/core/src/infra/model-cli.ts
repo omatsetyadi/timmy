@@ -208,6 +208,11 @@ export interface InitChoices {
   claudeAuthed: boolean
   /** a cloud provider set up during init (e.g. 'deepseek'); added to the providers block. */
   cloudProvider?: string
+  /** Extra cloud providers configured during init — the reasoning fallback (#3) plus any optional
+   *  keys (#4), e.g. ['anthropic', 'gemini']. Each is added to the providers block as openai-compat
+   *  (base_url auto-resolves for known providers); API keys are stored separately in the keychain.
+   *  Deduped against the frontdesk cloud provider + claude_code. */
+  extraProviders?: string[]
 }
 
 /** Detect the local environment for `timmy init`: reachable Ollama models + Claude Code auth.
@@ -232,6 +237,9 @@ export const buildInitConfig = (c: InitChoices): RawConfig => {
   const providers: Record<string, Record<string, unknown>> = {}
   if (c.claudeAuthed) providers.claude_code = { kind: 'claude-code' }
   if (c.cloudProvider) providers[c.cloudProvider] = { kind: 'openai-compat' }
+  for (const p of c.extraProviders ?? []) {
+    if (!providers[p]) providers[p] = { kind: 'openai-compat' } // dedupe — don't overwrite claude_code/frontdesk
+  }
   const raw: RawConfig = { models: { frontdesk: c.frontdesk } }
   if (Object.keys(providers).length > 0) raw.providers = providers
   return raw

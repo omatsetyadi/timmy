@@ -3,13 +3,16 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  DEFAULT_PLUGINS,
   hasBuiltEntry,
+  installDefaults,
   installLocal,
   isGithubSource,
   listInstalled,
   parseGithubSource,
   readInstalledManifest,
   remove,
+  type DefaultPlugin,
 } from './plugin-cli'
 
 /** Build a fake "built" plugin source dir: `<root>/<name>/dist/index.js` + `package.json`.
@@ -194,6 +197,73 @@ describe('readInstalledManifest', () => {
 
   it('returns null when there is no built entry', async () => {
     expect(await readInstalledManifest(mkdtempSync(join(tmpdir(), 'pm-')))).toBeNull()
+  })
+})
+
+describe('DEFAULT_PLUGINS', () => {
+  it('is the first-party set (machine, web, shell), each a GitHub source', () => {
+    expect(DEFAULT_PLUGINS.map((p) => p.name)).toEqual(['machine', 'web', 'shell'])
+    for (const p of DEFAULT_PLUGINS) {
+      expect(isGithubSource(p.source)).toBe(true)
+      expect(p.blurb.length).toBeGreaterThan(0)
+    }
+  })
+})
+
+describe('installDefaults', () => {
+  const plugins: DefaultPlugin[] = [
+    { name: 'a', source: 'github:u/a', blurb: 'aaa' },
+    { name: 'b', source: 'github:u/b', blurb: 'bbb' },
+    { name: 'c', source: 'github:u/c', blurb: 'ccc' },
+  ]
+
+  it('installs every plugin and reports all ok', async () => {
+    const installed: string[] = []
+    const results = await installDefaults(
+      plugins,
+      (p) => {
+        installed.push(p.name)
+      },
+      () => {},
+    )
+    expect(installed).toEqual(['a', 'b', 'c'])
+    expect(results).toEqual([
+      { name: 'a', ok: true },
+      { name: 'b', ok: true },
+      { name: 'c', ok: true },
+    ])
+  })
+
+  it('continues past a failing plugin and captures its error (init must not abort)', async () => {
+    const installed: string[] = []
+    const results = await installDefaults(
+      plugins,
+      (p) => {
+        if (p.name === 'b') throw new Error('clone failed')
+        installed.push(p.name)
+      },
+      () => {},
+    )
+    // a and c still installed despite b throwing
+    expect(installed).toEqual(['a', 'c'])
+    expect(results).toEqual([
+      { name: 'a', ok: true },
+      { name: 'b', ok: false, error: 'clone failed' },
+      { name: 'c', ok: true },
+    ])
+  })
+
+  it('awaits an async installer', async () => {
+    const order: string[] = []
+    await installDefaults(
+      [plugins[0]],
+      async (p) => {
+        await Promise.resolve()
+        order.push(p.name)
+      },
+      () => {},
+    )
+    expect(order).toEqual(['a'])
   })
 })
 

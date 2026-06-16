@@ -88,4 +88,39 @@ describe('buildInitConfig (timmy init → config object)', () => {
       providers: { deepseek: { kind: 'openai-compat' } },
     })
   })
+
+  itV('extraProviders (reasoning fallback + optional keys) → added as openai-compat', () => {
+    expect(
+      buildInitConfig({
+        frontdesk: { provider: 'ollama', model: 'qwen3:14b' },
+        claudeAuthed: true,
+        extraProviders: ['anthropic', 'gemini'],
+      }),
+    ).toEqual({
+      models: { frontdesk: { provider: 'ollama', model: 'qwen3:14b' } },
+      providers: {
+        claude_code: { kind: 'claude-code' },
+        anthropic: { kind: 'openai-compat' },
+        gemini: { kind: 'openai-compat' },
+      },
+    })
+  })
+
+  itV('extraProviders dedupe against the cloud frontdesk + claude_code (no overwrite)', () => {
+    expect(
+      buildInitConfig({
+        frontdesk: { provider: 'deepseek', model: 'deepseek-v4-flash' },
+        claudeAuthed: true,
+        cloudProvider: 'deepseek',
+        extraProviders: ['deepseek', 'claude_code', 'anthropic'],
+      }),
+    ).toEqual({
+      models: { frontdesk: { provider: 'deepseek', model: 'deepseek-v4-flash' } },
+      providers: {
+        claude_code: { kind: 'claude-code' },
+        deepseek: { kind: 'openai-compat' },
+        anthropic: { kind: 'openai-compat' },
+      },
+    })
+  })
 })
