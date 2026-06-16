@@ -6,6 +6,7 @@ import { Config, type TimmyConfig } from '../domain/config/config'
 import { CredentialStore } from '../domain/credentials/credential-store'
 import { LlmClient } from '../domain/llm/llm-client'
 import { ProviderRegistry } from '../domain/llm/provider-registry'
+import type { StreamChunk } from '../domain/llm/stream-chunk'
 import { ThreadStore } from '../domain/persistence/thread-store'
 import { EntityStore } from '../domain/memory/entity-store'
 import { PendingConfirmations } from '../domain/tools/confirmations'
@@ -109,30 +110,15 @@ export async function buildServer(
     }
     safeWrite(JSON.stringify({ thread_id: threadId }) + '\n')
 
-    const fiber = runtime.runFork(
-      stream.pipe(
-        Stream.runForEach((chunk) => Effect.sync(() => safeWrite(JSON.stringify(chunk) + '\n'))),
-        // Surface a mid-stream failure (e.g. Ollama drops): log it and emit an
-        // error frame to the client before the finalizer writes {done:true}.
-        Effect.tapErrorCause((cause) =>
-          Effect.sync(() => {
-            app.log.error({ cause: Cause.pretty(cause) }, 'chat stream failed')
-            const failure = Cause.failureOption(cause)
-            const message = Option.match(failure, {
-              onNone: () => 'stream failed',
-              onSome: (e) => (e instanceof Error ? e.message : String(e)),
-            })
-            safeWrite(JSON.stringify({ type: 'error', message }) + '\n')
-          }),
-        ),
-        Effect.ensuring(
-          Effect.sync(() => {
-            safeWrite(JSON.stringify({ done: true }) + '\n')
-            if (!reply.raw.writableEnded && !reply.raw.destroyed) reply.raw.end()
-          }),
-        ),
-      ),
-    )
+    // NDJSON sink: each chunk a line, a mid-stream failure as {type:'error'}, {done:true} last.
+    const fiber = pumpChat(runtime, app.log, stream, {
+      chunk: (chunk) => safeWrite(JSON.stringify(chunk) + '\n'),
+      error: (message) => safeWrite(JSON.stringify({ type: 'error', message }) + '\n'),
+      done: () => {
+        safeWrite(JSON.stringify({ done: true }) + '\n')
+        if (!reply.raw.writableEnded && !reply.raw.destroyed) reply.raw.end()
+      },
+    })
     req.raw.on('close', () => {
       runtime.runFork(Fiber.interrupt(fiber))
     })
@@ -144,28 +130,7 @@ export async function buildServer(
   app.post('/confirm/:id', async (req, reply) => {
     const { id } = req.params as { id: string }
     const { decision } = (req.body ?? {}) as { decision?: 'once' | 'always' | 'deny' }
-    if (decision === 'always') {
-      const always = await runtime.runPromise(
-        PendingConfirmations.pipe(Effect.flatMap((p) => p.peek(id))),
-      )
-      if (always) {
-        if (always.scope === 'command') {
-          await runtime.runPromise(
-            PermissionOverlay.pipe(Effect.flatMap((o) => o.allowCommand(always.signature))),
-          )
-          addAllowedCommand(always.signature)
-        } else {
-          await runtime.runPromise(
-            PermissionOverlay.pipe(Effect.flatMap((o) => o.setOverride(always.tool, 'allow'))),
-          )
-          setOverride('tool', always.tool, 'allow')
-        }
-      }
-    }
-    const allowed = decision === 'always' || decision === 'once'
-    const resolved = await runtime.runPromise(
-      PendingConfirmations.pipe(Effect.flatMap((p) => p.resolve(id, allowed))),
-    )
+    const resolved = await applyConfirmDecision(runtime, id, decision)
     if (!resolved) return reply.code(404).send({ resolved: false })
     return reply.code(200).send({ resolved: true })
   })
@@ -274,14 +239,141 @@ export async function buildServer(
     return { entities, relations }
   })
 
-  // WebSocket for voice/dashboard streaming (real handlers arrive later).
+  // WebSocket bridge for the voice daemon: mirrors POST /chat + POST /confirm over Socket.IO,
+  // emitting the same StreamChunk shapes /chat streams as NDJSON. One active turn per socket;
+  // a new `chat` or `interrupt` cancels the in-flight turn (barge-in). See voice spec §3.2.
   const io = new SocketIOServer(app.server, { path: '/stream' })
   io.on('connection', (socket) => {
     app.log.info({ id: socket.id }, 'socket connected')
-    socket.on('disconnect', () => app.log.info({ id: socket.id }, 'socket disconnected'))
+    let active: Fiber.RuntimeFiber<void, unknown> | null = null
+    const interruptActive = () => {
+      if (active) {
+        runtime.runFork(Fiber.interrupt(active))
+        active = null
+      }
+    }
+
+    socket.on('chat', async (body: { message?: string; thread_id?: string }) => {
+      if (!body?.message || typeof body.message !== 'string') {
+        socket.emit('chunk', { type: 'error', message: 'message (string) is required' })
+        socket.emit('done', {})
+        return
+      }
+      // One turn per socket: a new utterance (or barge-in) interrupts the in-flight turn first.
+      interruptActive()
+      const sent = await runtime.runPromise(
+        ChatService.pipe(
+          Effect.flatMap((c) => c.send({ message: body.message!, threadId: body.thread_id })),
+          Effect.either,
+        ),
+      )
+      if (Either.isLeft(sent)) {
+        socket.emit('chunk', { type: 'error', message: sent.left.message })
+        socket.emit('done', {})
+        return
+      }
+      const { threadId, stream } = sent.right
+      socket.emit('thread', { thread_id: threadId })
+      let turn: Fiber.RuntimeFiber<void, unknown> | null = null
+      turn = pumpChat(runtime, app.log, stream, {
+        chunk: (chunk) => socket.emit('chunk', chunk),
+        error: (message) => socket.emit('chunk', { type: 'error', message }),
+        done: () => {
+          // Only clear if THIS turn is still active — guards against a just-interrupted
+          // turn's finalizer nulling out a newer turn started by a barge-in.
+          if (active === turn) active = null
+          socket.emit('done', {})
+        },
+      })
+      active = turn
+    })
+
+    socket.on('confirm', (body: { id?: string; decision?: 'once' | 'always' | 'deny' }) => {
+      if (!body?.id) return
+      void applyConfirmDecision(runtime, body.id, body.decision)
+    })
+
+    socket.on('interrupt', () => interruptActive())
+
+    socket.on('disconnect', () => {
+      interruptActive()
+      app.log.info({ id: socket.id }, 'socket disconnected')
+    })
   })
 
   return app
+}
+
+/**
+ * Apply a confirm-tier decision: on "always" persist the allowance (live overlay + config.yaml),
+ * then resolve the pending request. Shared by HTTP POST /confirm and the WS `confirm` event so the
+ * once|always|deny logic lives in one place. Returns whether a pending entry was found + resolved.
+ */
+async function applyConfirmDecision(
+  runtime: ManagedRuntime.ManagedRuntime<AppServices, never>,
+  id: string,
+  decision: 'once' | 'always' | 'deny' | undefined,
+): Promise<boolean> {
+  if (decision === 'always') {
+    const always = await runtime.runPromise(
+      PendingConfirmations.pipe(Effect.flatMap((p) => p.peek(id))),
+    )
+    if (always) {
+      if (always.scope === 'command') {
+        await runtime.runPromise(
+          PermissionOverlay.pipe(Effect.flatMap((o) => o.allowCommand(always.signature))),
+        )
+        addAllowedCommand(always.signature)
+      } else {
+        await runtime.runPromise(
+          PermissionOverlay.pipe(Effect.flatMap((o) => o.setOverride(always.tool, 'allow'))),
+        )
+        setOverride('tool', always.tool, 'allow')
+      }
+    }
+  }
+  const allowed = decision === 'always' || decision === 'once'
+  return runtime.runPromise(
+    PendingConfirmations.pipe(Effect.flatMap((p) => p.resolve(id, allowed))),
+  )
+}
+
+/** A transport-agnostic sink the chat stream drives: NDJSON writer (HTTP) or socket emitter (WS). */
+interface ChatSink {
+  readonly chunk: (chunk: StreamChunk) => void
+  readonly error: (message: string) => void
+  readonly done: () => void
+}
+
+/**
+ * Run a chat stream into a sink as a detached fiber. A mid-stream failure is logged and surfaced as
+ * one `error` frame; the finalizer ALWAYS calls `done` (including on interrupt — this is how a
+ * barge-in produces the final `done`). Interrupt the returned fiber to cancel the turn. Shared by
+ * HTTP /chat and the WS bridge.
+ */
+function pumpChat(
+  runtime: ManagedRuntime.ManagedRuntime<AppServices, never>,
+  log: FastifyInstance['log'],
+  stream: Stream.Stream<StreamChunk, unknown>,
+  sink: ChatSink,
+): Fiber.RuntimeFiber<void, unknown> {
+  return runtime.runFork(
+    stream.pipe(
+      Stream.runForEach((chunk) => Effect.sync(() => sink.chunk(chunk))),
+      Effect.tapErrorCause((cause) =>
+        Effect.sync(() => {
+          log.error({ cause: Cause.pretty(cause) }, 'chat stream failed')
+          const failure = Cause.failureOption(cause)
+          const message = Option.match(failure, {
+            onNone: () => 'stream failed',
+            onSome: (e) => (e instanceof Error ? e.message : String(e)),
+          })
+          sink.error(message)
+        }),
+      ),
+      Effect.ensuring(Effect.sync(() => sink.done())),
+    ),
+  )
 }
 
 /**
