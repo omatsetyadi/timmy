@@ -61,6 +61,17 @@ export interface TimmyConfig {
   providers?: Record<string, ProviderConfig>
   permissions: PermissionConfig
   assistant: AssistantConfig
+  memory: {
+    learning_mode: boolean
+    notify_on_learn: boolean
+    always_kinds: string[]
+    recall_limit: number
+    recall_budget: number
+    /** Explicit memorySearch default limit — broader than the silent recall budget. */
+    search_limit: number
+    /** Hard cap on memoryList output (truncates explicitly past this). */
+    list_cap: number
+  }
 }
 
 export const CONFIG_DIR = join(homedir(), '.timmy')
@@ -82,6 +93,15 @@ const DEFAULTS: TimmyConfig = {
     name: 'Timmy',
     personality: DEFAULT_PERSONALITY,
     language: { proactive: 'en', conversation: 'auto', supported: ['en', 'id'] },
+  },
+  memory: {
+    learning_mode: true,
+    notify_on_learn: true,
+    always_kinds: ['preference'],
+    recall_limit: 5,
+    recall_budget: 15,
+    search_limit: 25,
+    list_cap: 200,
   },
 }
 
@@ -108,6 +128,7 @@ function loadConfig(path: string): TimmyConfig {
       ...f.assistant,
       language: { ...DEFAULTS.assistant.language, ...f.assistant?.language },
     },
+    memory: { ...DEFAULTS.memory, ...f.memory },
   }
 }
 

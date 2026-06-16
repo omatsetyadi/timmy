@@ -1,6 +1,7 @@
-import { Effect } from 'effect'
-import type { EmbedderImpl } from './embedder'
-import type { EntityStore } from './entity-store'
+import { Context, Effect, Layer, Stream } from 'effect'
+import { LlmClient } from '../llm/llm-client'
+import { Embedder, type EmbedderImpl } from './embedder'
+import { EntityStore } from './entity-store'
 import type { ExtractedGraph } from './types'
 
 /** Kind used for relation endpoints that weren't among the extracted entities. */
@@ -14,9 +15,13 @@ Output JSON ONLY (no prose, no markdown fences) of the shape:
 Rules:
 - "entities" are the durable things mentioned: people, companies, projects, tools, places, preferences, facts.
 - "relations" connect entity NAMES (from/to must match an entity name).
+- "kind" MUST be lowercase + singular + from a consistent vocabulary (person, company, project, tool, stock, holding, job, rule, preference, place). Never vary the case (always "person", never "Person").
+- Use ONE canonical name per real thing and reuse it exactly. If the user is "Omat Setyadi" also called "Omat", pick the fullest form ("Omat Setyadi") as the name and put the nickname in properties — do NOT create a separate "Omat" entity. Never split one real thing into multiple entities.
 - Reify any attributed or n-ary relationship into its OWN node instead of cramming details onto an edge. Examples: a Job (with role, start date) that links a person and a company; a Holding (with quantity, price) that links an owner and an asset; a Rule/preference (with scope, value) that a person holds. Then connect the reified node to its participants with simple relations.
-- Put qualifiers (dates, roles, amounts, confidence) in "properties", never invent them.
-- Extract only what is stated; emit empty arrays if nothing durable is present.
+- Put qualifiers (dates, roles, amounts) in "properties", never invent them.
+- Extract REAL-WORLD facts only. Do NOT emit meta/process relations (e.g. "merged_into", "is_about", "knows_via") or anything describing the assistant's own actions or this conversation — only what is true about the user and their world.
+- The user's own identity/preferences (name, nickname, language, how to address them) → store on a single person entity, and use kind "preference" for standalone preference facts (these are always-on context).
+- Extract only what is stated; emit empty arrays if nothing durable is present. Prefer FEW high-confidence entities over many speculative ones.
 
 The material is the following exchange:`
 
@@ -130,4 +135,30 @@ export function makeExtractor(deps: MakeExtractorDeps): ExtractorImpl {
     }).pipe(Effect.catchAll(() => Effect.void))
 
   return { extract }
+}
+
+/**
+ * Live extractor service: binds `makeExtractor` to the resolved EntityStore + Embedder and a
+ * `complete` that runs the frontdesk LlmClient on a one-shot user message and folds its
+ * `content` chunks into a single string. The extractor impl is already catchAll-wrapped, so
+ * `extract` never fails — safe to fire detached post-turn.
+ */
+export class Extractor extends Context.Tag('timmy/memory/extractor')<Extractor, ExtractorImpl>() {
+  static Live = Layer.effect(
+    Extractor,
+    Effect.gen(function* () {
+      const store = yield* EntityStore
+      const embedder = yield* Embedder
+      const llm = yield* LlmClient
+      const complete = (prompt: string) =>
+        llm
+          .chat([{ role: 'user', content: prompt }])
+          .pipe(
+            Stream.runFold('', (acc, chunk) =>
+              chunk.type === 'content' ? acc + chunk.content : acc,
+            ),
+          )
+      return makeExtractor({ store, embedder, complete })
+    }),
+  )
 }

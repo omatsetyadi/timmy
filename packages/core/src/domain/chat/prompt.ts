@@ -6,6 +6,7 @@ export function buildSystemPrompt(
   config: TimmyConfig,
   reasoningTargets: readonly string[] = [],
   claudeAvailable = false,
+  memoryBlock = '',
 ): string {
   const a = config.assistant
   let p = a.personality.trim()
@@ -29,6 +30,11 @@ export function buildSystemPrompt(
       `call the askClaude tool: Claude Code executes the task with its own tools and reports back. ` +
       `askClaude DOES work; askModel only reasons. Don't use askClaude for something runCommand can do in one command.`
   }
+  // Recalled memory subgraph ("What you know about the user"): appended last so it reads as
+  // grounding context after the behavioral instructions. Empty block = no append.
+  if (memoryBlock.trim()) {
+    p += `\n\n${memoryBlock.trim()}`
+  }
   return p
 }
 
@@ -38,9 +44,13 @@ export function buildMessages(
   userMessage: string,
   reasoningTargets: readonly string[] = [],
   claudeAvailable = false,
+  memoryBlock = '',
 ): ChatMessage[] {
   const msgs: ChatMessage[] = [
-    { role: 'system', content: buildSystemPrompt(config, reasoningTargets, claudeAvailable) },
+    {
+      role: 'system',
+      content: buildSystemPrompt(config, reasoningTargets, claudeAvailable, memoryBlock),
+    },
   ]
   for (const m of history) msgs.push({ role: m.role as ChatMessage['role'], content: m.content })
   msgs.push({ role: 'user', content: userMessage })

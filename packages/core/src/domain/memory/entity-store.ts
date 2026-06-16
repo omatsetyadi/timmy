@@ -82,11 +82,13 @@ export class EntityStore extends Context.Tag('timmy/memory/entity-store')<
       id: string,
     ) => Effect.Effect<{ entity: Entity; relations: Relation[] } | null, SqlError>
     readonly list: (kind?: string) => Effect.Effect<Entity[], SqlError>
+    readonly allRelations: () => Effect.Effect<Relation[], SqlError>
     readonly update: (
       id: string,
       properties: Record<string, unknown>,
     ) => Effect.Effect<void, SqlError>
     readonly delete: (id: string) => Effect.Effect<void, SqlError>
+    readonly deleteRelation: (id: string) => Effect.Effect<void, SqlError>
     readonly merge: (idA: string, idB: string) => Effect.Effect<Entity | null, SqlError>
   }
 >() {
@@ -107,9 +109,11 @@ export class EntityStore extends Context.Tag('timmy/memory/entity-store')<
       const upsert = (node: UpsertInput) =>
         Effect.gen(function* () {
           const newProps = node.properties ?? {}
+          const kind = node.kind.trim().toLowerCase()
+          const name = node.name.trim()
           const existing = yield* db.get<EntityRow>(
-            'SELECT id, properties FROM entities WHERE kind = ? AND name = ?',
-            [node.kind, node.name],
+            'SELECT id, properties FROM entities WHERE kind = ? AND name = ? COLLATE NOCASE',
+            [kind, name],
           )
           if (existing) {
             const existingProps = existing.properties
@@ -138,8 +142,8 @@ export class EntityStore extends Context.Tag('timmy/memory/entity-store')<
             'INSERT INTO entities (id,kind,name,properties,confidence,source,last_updated,expires_at) VALUES (?,?,?,?,?,?,?,?)',
             [
               id,
-              node.kind,
-              node.name,
+              kind,
+              name,
               JSON.stringify(newProps),
               node.confidence ?? 0.7,
               node.source ?? ENTITY_SOURCE_DEFAULT,
@@ -185,15 +189,17 @@ export class EntityStore extends Context.Tag('timmy/memory/entity-store')<
             ),
           )
 
-      const byKinds = (kinds: string[]) =>
-        kinds.length === 0
+      const byKinds = (kinds: string[]) => {
+        const normalized = kinds.map((k) => k.trim().toLowerCase())
+        return normalized.length === 0
           ? Effect.succeed([] as Entity[])
           : db
               .query<EntityRow>(
-                `SELECT * FROM entities WHERE kind IN (${kinds.map(() => '?').join(',')})`,
-                kinds,
+                `SELECT * FROM entities WHERE kind IN (${normalized.map(() => '?').join(',')})`,
+                normalized,
               )
               .pipe(Effect.map((rows) => rows.map(rowToEntity)))
+      }
 
       // Direct (1-hop) neighbors of `ids` plus the relations connecting them.
       const neighbors = (ids: string[]) =>
@@ -229,11 +235,19 @@ export class EntityStore extends Context.Tag('timmy/memory/entity-store')<
           return { entity: rowToEntity(row), relations: rels.map(rowToRelation) }
         })
 
-      const list = (kind?: string) =>
-        (kind === undefined
-          ? db.query<EntityRow>('SELECT * FROM entities', [])
-          : db.query<EntityRow>('SELECT * FROM entities WHERE kind = ?', [kind])
+      const list = (kind?: string) => {
+        const normalized = kind?.trim().toLowerCase()
+        return (
+          normalized === undefined || normalized === ''
+            ? db.query<EntityRow>('SELECT * FROM entities', [])
+            : db.query<EntityRow>('SELECT * FROM entities WHERE kind = ?', [normalized])
         ).pipe(Effect.map((rows) => rows.map(rowToEntity)))
+      }
+
+      const allRelations = () =>
+        db
+          .query<RelationRow>('SELECT * FROM relations', [])
+          .pipe(Effect.map((rows) => rows.map(rowToRelation)))
 
       const update = (id: string, properties: Record<string, unknown>) =>
         Effect.gen(function* () {
@@ -250,6 +264,8 @@ export class EntityStore extends Context.Tag('timmy/memory/entity-store')<
         })
 
       const del = (id: string) => db.run('DELETE FROM entities WHERE id = ?', [id])
+
+      const deleteRelation = (id: string) => db.run('DELETE FROM relations WHERE id = ?', [id])
 
       const merge = (idA: string, idB: string) =>
         Effect.gen(function* () {
@@ -297,8 +313,10 @@ export class EntityStore extends Context.Tag('timmy/memory/entity-store')<
         neighbors,
         getEntity,
         list,
+        allRelations,
         update,
         delete: del,
+        deleteRelation,
         merge,
       }
     }),

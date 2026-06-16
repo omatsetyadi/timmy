@@ -17,8 +17,22 @@ import { SafeExecution } from '../tools/safe-execution'
 import { PendingConfirmations } from '../tools/confirmations'
 import { PermissionOverlay } from '../tools/permission-overlay'
 import { ProviderRegistry } from '../llm/provider-registry'
+import { Recall } from '../memory/recall'
+import { Extractor } from '../memory/extract'
 
 const ConfigStub = Config.Live(`${process.cwd()}/__nope__.yaml`) // defaults
+
+// Memory stubs: recall returns no entities (no block, no memory_recall chunk) and the
+// extractor is a no-op, so ChatService behaves exactly as before the memory wiring.
+const RecallStub = Layer.succeed(
+  Recall,
+  Recall.of({
+    forMessage: () => Effect.succeed({ block: '', entityNames: [] }),
+    search: () => Effect.succeed([]),
+  }),
+)
+const ExtractorStub = Layer.succeed(Extractor, Extractor.of({ extract: () => Effect.void }))
+const MemoryStub = Layer.mergeAll(RecallStub, ExtractorStub)
 
 // Tools wiring for ChatService.Live's new deps. ToolSource.empty → no tools,
 // so the loop makes a single turn and behaves exactly like the foundation.
@@ -42,6 +56,7 @@ const EmptyToolsLayer = Layer.mergeAll(
     ProviderRegistry,
     ProviderRegistry.of({ pool: Effect.succeed([]), refresh: Effect.succeed([]) }),
   ),
+  MemoryStub,
 )
 const saved: { role: string; content: string }[] = []
 const ThreadStub = Layer.succeed(
@@ -276,6 +291,7 @@ it.live('runs the tool-loop: tool_call -> execute -> continue -> content', () =>
               ProviderRegistry,
               ProviderRegistry.of({ pool: Effect.succeed([]), refresh: Effect.succeed([]) }),
             ),
+            MemoryStub,
           ),
         ),
       ),
@@ -333,6 +349,7 @@ it.live('stops at MAX_TOOL_ITERATIONS, emitting an error chunk', () =>
               ProviderRegistry,
               ProviderRegistry.of({ pool: Effect.succeed([]), refresh: Effect.succeed([]) }),
             ),
+            MemoryStub,
           ),
         ),
       ),
@@ -428,6 +445,7 @@ it.live('confirm flow: emits confirm_required, resolves, then tool runs + conten
               ProviderRegistry,
               ProviderRegistry.of({ pool: Effect.succeed([]), refresh: Effect.succeed([]) }),
             ),
+            MemoryStub,
           ),
         ),
       ),
@@ -496,6 +514,7 @@ it.live(
                 ProviderRegistry,
                 ProviderRegistry.of({ pool: Effect.succeed([]), refresh: Effect.succeed([]) }),
               ),
+              MemoryStub,
             ),
           ),
         ),

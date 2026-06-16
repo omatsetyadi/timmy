@@ -14,6 +14,8 @@ import { CredentialStore } from '../credentials/credential-store'
 import { ProviderRegistry } from '../llm/provider-registry'
 import { ThreadStore } from '../persistence/thread-store'
 import type { StreamChunk } from '../llm/stream-chunk'
+import { Recall } from '../memory/recall'
+import { Extractor } from '../memory/extract'
 
 // ---------------------------------------------------------------------------
 // Task 16 Step 1b — askClaude integration test
@@ -41,6 +43,17 @@ const ThreadStub = Layer.succeed(
 const ProviderRegistryStub = Layer.succeed(
   ProviderRegistry,
   ProviderRegistry.of({ pool: Effect.succeed([]), refresh: Effect.succeed([]) }),
+)
+
+const MemoryStub = Layer.mergeAll(
+  Layer.succeed(
+    Recall,
+    Recall.of({
+      forMessage: () => Effect.succeed({ block: '', entityNames: [] }),
+      search: () => Effect.succeed([]),
+    }),
+  ),
+  Layer.succeed(Extractor, Extractor.of({ extract: () => Effect.void })),
 )
 
 // Scripted LLM: turn 1 → tool_call askClaude (confirm-tier); turn 2 → content "Done".
@@ -120,6 +133,7 @@ it.live('askClaude is gated by confirm, then its result feeds the answer', () =>
             ThreadStub,
             StubLlm,
             ProviderRegistryStub,
+            MemoryStub,
             ToolRegistry.Live.pipe(
               Layer.provide(ToolSource.layer([askClaudeTool])),
               Layer.provide(CredentialStore.Live),
@@ -179,6 +193,7 @@ it.live('delivers confirm_required to consumer BEFORE the decision', () => {
             ThreadStub,
             StubLlm,
             ProviderRegistryStub,
+            MemoryStub,
             ToolRegistry.Live.pipe(
               Layer.provide(ToolSource.layer([askClaudeTool])),
               Layer.provide(CredentialStore.Live),

@@ -24,6 +24,12 @@ describe('parseFrame (NDJSON line → frame)', () => {
     })
   })
 
+  it('parseFrame maps a memory_recall chunk to a memory frame', () => {
+    expect(
+      parseFrame(JSON.stringify({ type: 'memory_recall', entities: ['Omat', 'Jitera'] })),
+    ).toEqual({ kind: 'memory', entities: ['Omat', 'Jitera'] })
+  })
+
   it('reads a typed StreamChunk line as kind:chunk', () => {
     expect(parseFrame('{"type":"content","content":"hi"}')).toEqual({
       kind: 'chunk',

@@ -12,6 +12,9 @@ import { resolveModelCapabilities } from '../llm/capabilities'
 import { readFile } from 'node:fs/promises'
 import type { StreamChunk } from '../llm/stream-chunk'
 import { ToolSource } from './tool-source'
+import { EntityStore } from '../memory/entity-store'
+import { Recall } from '../memory/recall'
+import { buildMemoryTools } from '../memory/memory-tools'
 
 const apiKeyKey = (provider: string) => `model:${provider}:api_key`
 
@@ -25,6 +28,8 @@ export const CoreToolSource = Layer.effect(
     const cfg = yield* (yield* Config).get
     const creds = yield* CredentialStore
     const registry = yield* ProviderRegistry
+    const store = yield* EntityStore
+    const recall = yield* Recall
     const providers: Record<string, ProviderConfig> = effectiveProviders(cfg) // implicit Ollama default
     const pool = yield* registry.pool
 
@@ -108,8 +113,12 @@ export const CoreToolSource = Layer.effect(
       post: (url, headers, body) =>
         fetch(url, { method: 'POST', headers, body: JSON.stringify(body) }),
     })
+    const memoryTools = buildMemoryTools(store, recall, {
+      searchLimit: cfg.memory.search_limit,
+      listCap: cfg.memory.list_cap,
+    })
     return {
-      tools: [askModel, askVision, ...askClaudeTool],
+      tools: [askModel, askVision, ...askClaudeTool, ...memoryTools],
       credentialScopeByTool: new Map(),
     }
   }),

@@ -87,6 +87,21 @@ providers:
   })
 })
 
+describe('memory config', () => {
+  it('defaults the memory block (learning on, notify on, preference always_kinds, recall_limit 5, recall_budget 15, search_limit 25, list_cap 200)', () => {
+    const cfg = readConfigSync('/nonexistent/path/config.yaml') // missing file → DEFAULTS
+    expect(cfg.memory).toEqual({
+      learning_mode: true,
+      notify_on_learn: true,
+      always_kinds: ['preference'],
+      recall_limit: 5,
+      recall_budget: 15,
+      search_limit: 25,
+      list_cap: 200,
+    })
+  })
+})
+
 describe('permissions config', () => {
   it('defaults to { mode: default } when absent', () => {
     const path = writeCfg(`models:\n  frontdesk: { provider: ollama, model: qwen3:14b }\n`)

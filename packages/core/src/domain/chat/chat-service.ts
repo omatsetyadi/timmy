@@ -12,6 +12,8 @@ import { ChatValidationError, type ChatError } from './errors'
 import { buildMessages } from './prompt'
 import { extractImagePaths, attachImages } from './image-attach'
 import { ProviderRegistry } from '../llm/provider-registry'
+import { Recall } from '../memory/recall'
+import { Extractor } from '../memory/extract'
 
 export interface SendParams {
   message: string
@@ -44,6 +46,8 @@ export class ChatService extends Context.Tag('timmy/chat/service')<
       const registry = yield* ToolRegistry
       const safeExec = yield* SafeExecution
       const providerRegistry = yield* ProviderRegistry
+      const recall = yield* Recall
+      const extractor = yield* Extractor
 
       const send = (p: SendParams) =>
         Effect.gen(function* () {
@@ -58,12 +62,20 @@ export class ChatService extends Context.Tag('timmy/chat/service')<
           const history = yield* store.getMessages(threadId).pipe(Effect.orElseSucceed(() => []))
           const pool = yield* providerRegistry.pool
           const claudeAvailable = config.providers?.claude_code !== undefined
+          // Recall: pull the relevant memory subgraph for this message. `forMessage` is already
+          // catchAll-wrapped to a safe empty result, but guard again so a failure here can never
+          // break chat. `block` is injected into the system prompt; `entityNames` drives the
+          // stream-start `memory_recall` chunk.
+          const { block, entityNames } = yield* recall
+            .forMessage(p.message)
+            .pipe(Effect.orElseSucceed(() => ({ block: '', entityNames: [] as string[] })))
           const messages = buildMessages(
             config,
             history,
             p.message,
             pool.map((t) => t.id),
             claudeAvailable,
+            block,
           )
           yield* store.addMessage(threadId, 'user', p.message)
 
@@ -218,6 +230,12 @@ export class ChatService extends Context.Tag('timmy/chat/service')<
                 yield* runIteration(next, iteration + 1)
               })
 
+            // Stream-start: surface the recalled entities to the client so the UI can show
+            // "remembering: …" before any tokens arrive. Emitted once, before the first turn.
+            if (entityNames.length > 0) {
+              emit.single({ type: 'memory_recall', entities: entityNames })
+            }
+
             // Run the loop in a detached fiber so emitted chunks flush to the consumer
             // immediately, even while the loop blocks awaiting a confirm. Return a finalizer
             // that interrupts the producer when the consumer-facing stream ends or is
@@ -233,13 +251,20 @@ export class ChatService extends Context.Tag('timmy/chat/service')<
             Stream.ensuring(
               Effect.gen(function* () {
                 const full = yield* Ref.get(accRef)
-                if (full)
+                if (full) {
                   yield* store.addMessage(threadId, 'assistant', full).pipe(
                     Effect.tapError((e) =>
                       Effect.logWarning(`failed to persist assistant message: ${String(e)}`),
                     ),
                     Effect.orElseSucceed(() => undefined),
                   )
+                  // Post-turn learning: extract a knowledge graph from this exchange and persist
+                  // it. Fired DETACHED (runFork) so it never blocks or affects the stream; the
+                  // extractor is already catchAll-wrapped, so a failure is swallowed silently.
+                  if (config.memory.learning_mode) {
+                    Effect.runFork(extractor.extract(p.message, full))
+                  }
+                }
               }),
             ),
           )

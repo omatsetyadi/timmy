@@ -22,6 +22,10 @@ import { ToolRegistry } from '../domain/tools/tool-registry'
 import { SafeExecution } from '../domain/tools/safe-execution'
 import { PendingConfirmations } from '../domain/tools/confirmations'
 import { PermissionOverlay } from '../domain/tools/permission-overlay'
+import { EntityStore } from '../domain/memory/entity-store'
+import { Embedder } from '../domain/memory/embedder'
+import { Recall } from '../domain/memory/recall'
+import { Extractor } from '../domain/memory/extract'
 
 /**
  * Build the full application layer once at boot and wrap it in a ManagedRuntime.
@@ -101,17 +105,37 @@ export function buildRuntime() {
     Layer.provideMerge(base),
   )
 
-  // Tool sources: core (needs Config + creds + ProviderRegistry) merged with plugins.
+  // Memory tier. EntityStore needs Db; Embedder needs Config (both in llmLayer's output via
+  // its provideMerge(base)). Recall needs Config + EntityStore + Embedder; Extractor needs
+  // LlmClient + EntityStore + Embedder. mergeAll does NOT cross-wire siblings, so build the
+  // leaves first (EntityStore + Embedder), then layer Recall + Extractor on top with
+  // provideMerge so the leaves stay in the output channel AND satisfy the dependents.
+  //   memBase  : EntityStore + Embedder, requirements met by llmLayer.
+  //   memLayer : Recall + Extractor provided memBase (for EntityStore/Embedder) which itself
+  //              still needs Config/LlmClient — satisfied by provideMerge(llmLayer). The result
+  //              exposes EntityStore, Embedder, Recall, Extractor (+ everything llmLayer carries).
+  const memBase = Layer.mergeAll(EntityStore.Live, Embedder.Live)
+  const memLayer = Layer.mergeAll(Recall.Live, Extractor.Live).pipe(
+    Layer.provideMerge(memBase),
+    Layer.provideMerge(llmLayer),
+  )
+
+  // Tool sources: core (needs Config + creds + ProviderRegistry + EntityStore + Recall) merged
+  // with plugins. CoreToolSource gets memLayer (which carries llmLayer's services too) so all of
+  // its requirements are satisfied.
   const toolSource = mergeToolSources(
-    CoreToolSource.pipe(Layer.provide(llmLayer)),
+    CoreToolSource.pipe(Layer.provide(memLayer)),
     PluginToolSource,
   )
 
   // Both the registry (to hide blocked tools) and SafeExecution (to resolve a tool's owning
   // plugin for permission overrides) now read the ToolSource, so provide it to the whole tier.
+  // provideMerge(memLayer) (which itself carries llmLayer's services) keeps Recall + Extractor —
+  // alongside LlmClient/ThreadStore/Config/… — in the output channel so ChatService (added in
+  // AppLayer via provideMerge(mid)) can yield them.
   const mid = Layer.mergeAll(ThreadStore.Live, SafeExecution.Live, ToolRegistry.Live).pipe(
     Layer.provide(toolSource),
-    Layer.provideMerge(llmLayer),
+    Layer.provideMerge(memLayer),
   )
 
   const AppLayer = ChatService.Live.pipe(Layer.provideMerge(mid))

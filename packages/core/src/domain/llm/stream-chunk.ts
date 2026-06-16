@@ -12,4 +12,5 @@ export type StreamChunk =
   | { type: 'confirm_required'; id: string; tool: string; description: string; always: AlwaysHint }
   | { type: 'finish'; reason: 'stop' | 'length' | 'tool_calls' }
   | { type: 'usage'; promptTokens: number; completionTokens: number }
+  | { type: 'memory_recall'; entities: string[] }
   | { type: 'error'; message: string }

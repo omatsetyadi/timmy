@@ -37,6 +37,7 @@ import {
   type InitChoices,
 } from './model-cli'
 import { addAllowedCommand, setMode, setOverride } from './permission-cli'
+import { memory } from './memory-cli'
 import { buildRuntime } from './runtime'
 import { buildServer } from './server'
 
@@ -554,6 +555,14 @@ Permissions (allow / ask / block — safe runs, risky asks, blocked is off):
   permission allow <command>         Allowlist a shell command for runCommand (auto-run)
   yolo <on|off>                      Alias for \`permission mode yolo|default\`
 
+Memory (the knowledge graph Timmy learns about you):
+  memory list [--kind <k>]           List remembered entities (optionally filter by kind)
+  memory show <id>                   Show an entity and its relations
+  memory add --kind <k> --name <n> [--prop k=v ...]   Manually add an entity
+  memory update <id> --prop k=v ...  Merge properties into an entity
+  memory delete <id>                 Forget an entity
+  memory learning <on|off|status>    Toggle whether Timmy learns from conversations
+
   Note: askClaude (agentic Claude Code) needs the \`claude\` CLI installed + logged in
   (\`claude auth status\`; \`model status\` shows availability + auto-mode state).
 
@@ -569,6 +578,7 @@ export function run(): void {
   else if (cmd === 'plugin') void plugin(process.argv.slice(3))
   else if (cmd === 'model') void model(process.argv.slice(3))
   else if (cmd === 'permission') permission(process.argv.slice(3))
+  else if (cmd === 'memory') void memory(process.argv.slice(3))
   else if (cmd === 'yolo') yolo(process.argv.slice(3))
   else if (cmd === 'version' || cmd === '--version' || cmd === '-v')
     console.log(`Timmy v${VERSION}`)

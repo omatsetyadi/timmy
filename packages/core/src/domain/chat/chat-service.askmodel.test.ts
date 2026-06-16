@@ -14,6 +14,8 @@ import { CredentialStore } from '../credentials/credential-store'
 import { ProviderRegistry } from '../llm/provider-registry'
 import { ThreadStore } from '../persistence/thread-store'
 import type { StreamChunk } from '../llm/stream-chunk'
+import { Recall } from '../memory/recall'
+import { Extractor } from '../memory/extract'
 
 // ---------------------------------------------------------------------------
 // Task 16 Step 1 — askModel integration test
@@ -39,6 +41,17 @@ const ThreadStub = Layer.succeed(
 const ProviderRegistryStub = Layer.succeed(
   ProviderRegistry,
   ProviderRegistry.of({ pool: Effect.succeed([]), refresh: Effect.succeed([]) }),
+)
+
+const MemoryStub = Layer.mergeAll(
+  Layer.succeed(
+    Recall,
+    Recall.of({
+      forMessage: () => Effect.succeed({ block: '', entityNames: [] }),
+      search: () => Effect.succeed([]),
+    }),
+  ),
+  Layer.succeed(Extractor, Extractor.of({ extract: () => Effect.void })),
 )
 
 // Scripted LLM: turn 1 → tool_call askModel; turn 2 → content with "42".
@@ -98,6 +111,7 @@ it.live('frontdesk calls askModel and answers using the result', () => {
             ThreadStub,
             StubLlm,
             ProviderRegistryStub,
+            MemoryStub,
             ToolRegistry.Live.pipe(
               Layer.provide(ToolSource.layer([askModelTool])),
               Layer.provide(CredentialStore.Live),

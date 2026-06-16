@@ -48,6 +48,10 @@ describe('reduceFrame', () => {
     })
     expect(s).toBe(s0)
   })
+  it('a memory frame appends a memory part to the in-progress turn', () => {
+    const s = reduceFrame(initialState(), { kind: 'memory', entities: ['Omat', 'Jitera'] })
+    expect(s.parts).toEqual([{ type: 'memory', entities: ['Omat', 'Jitera'] }])
+  })
   it('confirm frame surfaces the request', () => {
     const s = reduceFrame(s0, {
       kind: 'confirm',

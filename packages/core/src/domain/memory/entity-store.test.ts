@@ -206,6 +206,36 @@ it.effect('merge: dedupes duplicate edges and removes self-loops after rewiring'
   }).pipe(Effect.provide(TestLayer)),
 )
 
+it.effect('upsert dedupes across kind case (person vs Person) and name case/whitespace', () =>
+  Effect.gen(function* () {
+    const store = yield* EntityStore
+    yield* store.upsert({ kind: 'Person', name: 'Omat', properties: { a: 1 } })
+    yield* store.upsert({ kind: 'person', name: ' omat ', properties: { b: 2 } }) // same entity (case+trim)
+    const all = yield* store.list()
+    const omats = all.filter((e) => e.name.toLowerCase().trim() === 'omat')
+    expect(omats.length).toBe(1)
+    expect(omats[0].kind).toBe('person') // stored canonical (lowercased)
+    expect(omats[0].properties).toEqual({ a: 1, b: 2 }) // merged
+  }).pipe(Effect.provide(TestLayer)),
+)
+
+it.effect('different names are NOT merged (Omat vs Omat Setyadi)', () =>
+  Effect.gen(function* () {
+    const store = yield* EntityStore
+    yield* store.upsert({ kind: 'person', name: 'Omat' })
+    yield* store.upsert({ kind: 'person', name: 'Omat Setyadi' })
+    expect((yield* store.list()).length).toBe(2)
+  }).pipe(Effect.provide(TestLayer)),
+)
+
+it.effect('byKinds matches regardless of stored/queried kind case', () =>
+  Effect.gen(function* () {
+    const store = yield* EntityStore
+    yield* store.upsert({ kind: 'Preference', name: 'lang' })
+    expect((yield* store.byKinds(['preference'])).length).toBe(1)
+  }).pipe(Effect.provide(TestLayer)),
+)
+
 it.effect('delete removes the entity', () =>
   Effect.gen(function* () {
     const store = yield* EntityStore
@@ -214,5 +244,24 @@ it.effect('delete removes the entity', () =>
     const got = yield* store.getEntity(e.id)
     expect(got).toBeNull()
     expect(yield* store.list()).toHaveLength(0)
+  }).pipe(Effect.provide(TestLayer)),
+)
+
+it.effect('deleteRelation removes only the relation, leaving the entities intact', () =>
+  Effect.gen(function* () {
+    const store = yield* EntityStore
+    const omat = yield* store.upsert({ kind: 'person', name: 'Omat' })
+    const jitera = yield* store.upsert({ kind: 'company', name: 'Jitera' })
+    const rel = yield* store.addRelation(omat.id, 'works_at', jitera.id)
+    yield* store.deleteRelation(rel.id)
+    // relation is gone
+    const all = yield* store.allRelations()
+    expect(all.map((r) => r.id)).not.toContain(rel.id)
+    const n = yield* store.neighbors([omat.id])
+    expect(n.relations.map((r) => r.id)).not.toContain(rel.id)
+    // both entities still exist
+    expect(yield* store.getEntity(omat.id)).not.toBeNull()
+    expect(yield* store.getEntity(jitera.id)).not.toBeNull()
+    expect((yield* store.list()).map((e) => e.id).sort()).toEqual([omat.id, jitera.id].sort())
   }).pipe(Effect.provide(TestLayer)),
 )

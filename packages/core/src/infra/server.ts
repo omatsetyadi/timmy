@@ -7,6 +7,7 @@ import { CredentialStore } from '../domain/credentials/credential-store'
 import { LlmClient } from '../domain/llm/llm-client'
 import { ProviderRegistry } from '../domain/llm/provider-registry'
 import { ThreadStore } from '../domain/persistence/thread-store'
+import { EntityStore } from '../domain/memory/entity-store'
 import { PendingConfirmations } from '../domain/tools/confirmations'
 import { mergeOverlay, PermissionOverlay } from '../domain/tools/permission-overlay'
 import { statusReport } from './model-cli'
@@ -30,6 +31,7 @@ type AppServices =
   | PermissionOverlay
   | Config
   | ProviderRegistry
+  | EntityStore
 
 /**
  * Build the timmy-core HTTP + WebSocket server. Caller calls `.listen()`.
@@ -205,6 +207,71 @@ export async function buildServer(
       return reply.code(400).send({ error: 'unknown permission mutation' })
     }
     return reply.code(200).send({ ok: true })
+  })
+
+  // ── Memory (knowledge graph) ──────────────────────────────────────────────
+  // Protected by the onRequest auth hook (not in PUBLIC_ROUTES).
+  app.get('/memory/entities', async (req) => {
+    const { kind } = (req.query ?? {}) as { kind?: string }
+    const entities = await runtime.runPromise(EntityStore.pipe(Effect.flatMap((s) => s.list(kind))))
+    return { entities }
+  })
+
+  app.get('/memory/entities/:id', async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const found = await runtime.runPromise(EntityStore.pipe(Effect.flatMap((s) => s.getEntity(id))))
+    if (!found) return reply.code(404).send({ error: 'entity not found' })
+    return found
+  })
+
+  app.post('/memory/entities', async (req, reply) => {
+    const body = (req.body ?? {}) as {
+      kind?: string
+      name?: string
+      properties?: Record<string, unknown>
+    }
+    if (!body.kind || !body.name) {
+      return reply.code(400).send({ error: 'kind and name (strings) are required' })
+    }
+    const entity = await runtime.runPromise(
+      EntityStore.pipe(
+        Effect.flatMap((s) =>
+          s.upsert({
+            kind: body.kind!,
+            name: body.name!,
+            properties: body.properties,
+            source: 'manual',
+          }),
+        ),
+      ),
+    )
+    return reply.code(200).send(entity)
+  })
+
+  app.patch('/memory/entities/:id', async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const body = (req.body ?? {}) as { properties?: Record<string, unknown> }
+    await runtime.runPromise(
+      EntityStore.pipe(Effect.flatMap((s) => s.update(id, body.properties ?? {}))),
+    )
+    return reply.code(200).send({ ok: true })
+  })
+
+  app.delete('/memory/entities/:id', async (req, reply) => {
+    const { id } = req.params as { id: string }
+    await runtime.runPromise(EntityStore.pipe(Effect.flatMap((s) => s.delete(id))))
+    return reply.code(200).send({ ok: true })
+  })
+
+  // The whole graph (entities + every relation) for the future dashboard viz.
+  app.get('/memory/graph', async () => {
+    const [entities, relations] = await runtime.runPromise(
+      Effect.all([
+        EntityStore.pipe(Effect.flatMap((s) => s.list())),
+        EntityStore.pipe(Effect.flatMap((s) => s.allRelations())),
+      ]),
+    )
+    return { entities, relations }
   })
 
   // WebSocket for voice/dashboard streaming (real handlers arrive later).

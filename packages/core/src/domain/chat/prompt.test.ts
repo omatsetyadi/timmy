@@ -55,3 +55,17 @@ it('mentions askClaude as the agentic doer when claudeAvailable', () => {
 it('omits askClaude when not available', () => {
   expect(buildSystemPrompt(cfg, [], false)).not.toMatch(/askClaude/)
 })
+
+describe('recalled memory block', () => {
+  const block = '## What you know about the user\n- person: Omat {role: founder}'
+  it('appends the memory block to the system message when provided', () => {
+    const msgs = buildMessages(cfg, [], 'hi', [], false, block)
+    expect(msgs[0].role).toBe('system')
+    expect(msgs[0].content).toContain('What you know about the user')
+    expect(msgs[0].content).toContain('person: Omat')
+  })
+  it('omits the memory block when absent', () => {
+    expect(buildSystemPrompt(cfg, [], false)).not.toContain('What you know about the user')
+    expect(buildSystemPrompt(cfg, [], false, '')).not.toContain('What you know about the user')
+  })
+})

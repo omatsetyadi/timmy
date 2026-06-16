@@ -1,6 +1,9 @@
 import type { ChatFrame } from './frames'
 
-export type TurnPart = { type: 'text'; text: string } | { type: 'tool'; name: string }
+export type TurnPart =
+  | { type: 'text'; text: string }
+  | { type: 'tool'; name: string }
+  | { type: 'memory'; entities: string[] }
 export interface TranscriptItem {
   role: 'user' | 'assistant'
   parts: TurnPart[]
@@ -36,6 +39,8 @@ export function reduceFrame(s: ChatState, f: ChatFrame): ChatState {
         ...s,
         confirm: { id: f.id, tool: f.tool, description: f.description, always: f.always },
       }
+    case 'memory':
+      return { ...s, parts: [...s.parts, { type: 'memory', entities: f.entities }] }
     case 'chunk':
       if (f.chunk.type === 'content') {
         const last = s.parts[s.parts.length - 1]

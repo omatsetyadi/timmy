@@ -5,15 +5,23 @@ import type { TranscriptItem, TurnPart } from './reduce'
 export function Parts({ parts }: { parts: TurnPart[] }): React.ReactElement {
   return (
     <>
-      {parts.map((p, i) =>
-        p.type === 'text' ? (
-          <Text key={i} color="white">
-            {p.text}
-          </Text>
-        ) : (
-          <Text key={i} color="cyan">{`  ⏺ ${p.name}`}</Text>
-        ),
-      )}
+      {parts.map((p, i) => {
+        if (p.type === 'text')
+          return (
+            <Text key={i} color="white">
+              {p.text}
+            </Text>
+          )
+        if (p.type === 'memory')
+          return (
+            <Text
+              key={i}
+              color="magenta"
+              dimColor
+            >{`  ◆ recalled: ${p.entities.join(' · ')}`}</Text>
+          )
+        return <Text key={i} color="cyan">{`  ⏺ ${p.name}`}</Text>
+      })}
     </>
   )
 }

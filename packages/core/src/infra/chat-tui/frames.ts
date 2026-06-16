@@ -16,6 +16,7 @@ export type ChatFrame =
       description: string
       always: { scope: 'command' | 'tool'; label: string }
     }
+  | { kind: 'memory'; entities: string[] }
   | { kind: 'chunk'; chunk: StreamChunk }
   | { kind: 'ignore' }
 
@@ -40,6 +41,12 @@ export function parseFrame(line: string): ChatFrame {
         scope: 'tool',
         label: String(obj.tool),
       },
+    }
+  }
+  if (obj.type === 'memory_recall') {
+    return {
+      kind: 'memory',
+      entities: Array.isArray(obj.entities) ? (obj.entities as string[]) : [],
     }
   }
   if (typeof obj.type === 'string') return { kind: 'chunk', chunk: obj as unknown as StreamChunk }
@@ -71,6 +78,7 @@ export function renderChunk(chunk: StreamChunk, opts: RenderOpts = {}): string {
       return red(`\n✗ ${chunk.message}\n`)
     case 'finish':
     case 'confirm_required':
+    case 'memory_recall':
       return ''
   }
 }

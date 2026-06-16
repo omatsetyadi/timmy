@@ -28,4 +28,21 @@ describe('Transcript', () => {
     expect(out).toContain('⏺ runAppleScript')
     expect(out).toContain('done')
   })
+
+  it('renders a memory part as an inline recalled line with the entities', () => {
+    const r = render(
+      <Transcript
+        items={[
+          {
+            role: 'assistant',
+            parts: [{ type: 'memory', entities: ['Omat', 'Jitera'] }],
+          },
+        ]}
+      />,
+    )
+    const out = r.frames.join('\n')
+    expect(out).toContain('recalled')
+    expect(out).toContain('Omat')
+    expect(out).toContain('Jitera')
+  })
 })
