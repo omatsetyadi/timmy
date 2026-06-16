@@ -21,6 +21,7 @@ import { mergeToolSources } from '../domain/tools/tool-source'
 import { ToolRegistry } from '../domain/tools/tool-registry'
 import { SafeExecution } from '../domain/tools/safe-execution'
 import { PendingConfirmations } from '../domain/tools/confirmations'
+import { PermissionOverlay } from '../domain/tools/permission-overlay'
 
 /**
  * Build the full application layer once at boot and wrap it in a ManagedRuntime.
@@ -92,6 +93,7 @@ export function buildRuntime() {
     Db.Live(dbPath),
     CredentialStore.Live,
     PendingConfirmations.Live,
+    PermissionOverlay.Live,
   )
 
   // ProviderRegistry needs Config + CredentialStore; FrontdeskLlm too.

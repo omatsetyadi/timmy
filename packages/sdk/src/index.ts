@@ -62,6 +62,12 @@ export interface Tool {
    *  and asks on mutations. Returns `allow` | `ask` only (it can never block — config / `riskLevel`
    *  own blocking). This is what lets gated tools live in plugins, not just core. */
   classify?: (args: Record<string, unknown>, ctx: RiskClassifierContext) => RiskDecision
+  /** Optional: when the host persists an "always allow" for THIS call, returns the signature to
+   *  remember so the always-allow scopes to matching calls via the user's allowlist — e.g. a
+   *  terminal tool returns `git commit` for `git commit -m "x"`. Returns `null` to fall back to a
+   *  tool-level always-allow (`tools[name] = allow`). A tool that returns a signature MUST also
+   *  consult `ctx.allowlist` in {@link Tool.classify}, or the persisted signature won't take effect. */
+  allowSignature?: (args: Record<string, unknown>) => string | null
   execute(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult>
 }
 

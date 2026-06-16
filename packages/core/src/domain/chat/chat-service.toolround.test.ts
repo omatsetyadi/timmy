@@ -8,6 +8,7 @@ import { ToolSource } from '../tools/tool-source'
 import { ToolRegistry } from '../tools/tool-registry'
 import { SafeExecution } from '../tools/safe-execution'
 import { PendingConfirmations } from '../tools/confirmations'
+import { PermissionOverlay } from '../tools/permission-overlay'
 import { Config } from '../config/config'
 import { CredentialStore } from '../credentials/credential-store'
 import { ProviderRegistry } from '../llm/provider-registry'
@@ -109,6 +110,7 @@ it.live(
               ),
               SafeExecution.Live.pipe(
                 Layer.provide(PendingConfirmations.Live),
+                Layer.provide(PermissionOverlay.Live),
                 Layer.provide(ConfigStub),
                 Layer.provide(ToolSource.empty),
               ),

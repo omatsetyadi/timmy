@@ -8,6 +8,7 @@ import { ToolSource } from '../tools/tool-source'
 import { ToolRegistry } from '../tools/tool-registry'
 import { SafeExecution } from '../tools/safe-execution'
 import { PendingConfirmations } from '../tools/confirmations'
+import { PermissionOverlay } from '../tools/permission-overlay'
 import { Config } from '../config/config'
 import { CredentialStore } from '../credentials/credential-store'
 import { ProviderRegistry } from '../llm/provider-registry'
@@ -126,6 +127,7 @@ it.live('askClaude is gated by confirm, then its result feeds the answer', () =>
             ),
             SafeExecution.Live.pipe(
               Layer.provideMerge(PendingConfirmations.Live),
+              Layer.provide(PermissionOverlay.Live),
               Layer.provide(ConfigStub),
               Layer.provide(ToolSource.empty),
             ),
@@ -184,6 +186,7 @@ it.live('delivers confirm_required to consumer BEFORE the decision', () => {
             ),
             SafeExecution.Live.pipe(
               Layer.provideMerge(PendingConfirmations.Live),
+              Layer.provide(PermissionOverlay.Live),
               Layer.provide(ConfigStub),
               Layer.provide(ToolSource.empty),
             ),

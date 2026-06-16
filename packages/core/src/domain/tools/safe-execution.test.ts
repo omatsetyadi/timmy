@@ -5,6 +5,7 @@ import { expect } from 'vitest'
 import type { Tool } from 'timmy-sdk'
 import { Config } from '../config/config'
 import { PendingConfirmations } from './confirmations'
+import { PermissionOverlay } from './permission-overlay'
 import { SafeExecution, confirmDescription } from './safe-execution'
 import { ToolSource } from './tool-source'
 
@@ -36,6 +37,10 @@ const mk = (riskLevel: Tool['riskLevel']): Tool => ({
 // blocked→block — identical to the pre-resolver behavior these tests assert.
 const layer = SafeExecution.Live.pipe(
   Layer.provideMerge(PendingConfirmations.Live),
+  // PermissionOverlay is a SafeExecution dependency, read at resolve time. provideMerge keeps the
+  // service in the output channel so tests can obtain it and set overlay entries before running.
+  // An empty overlay is a no-op via mergeOverlay, so the existing tests are unaffected.
+  Layer.provideMerge(PermissionOverlay.Live),
   Layer.provide(Config.Live('/nonexistent/timmy-test.yaml')),
   Layer.provide(ToolSource.empty),
 )
@@ -111,6 +116,27 @@ it.effect('confirm tier does NOT time out — waits indefinitely, a late decisio
     // A late 'allow' still works (no abandonment): the tool runs.
     yield* pc.resolve('id5', true)
     const r = yield* Fiber.join(fiber)
+    expect(r).toStrictEqual({ ok: true, data: 'ran' })
+  }).pipe(Effect.provide(layer)),
+)
+
+// The live overlay is read at resolve time: once allowTool() names a confirm-tier tool, it
+// resolves to ALLOW and runs WITHOUT emitting a confirm — no restart, no Deferred wait.
+it.effect('overlay allowTool makes a confirm-tier tool run without asking', () =>
+  Effect.gen(function* () {
+    const overlay = yield* PermissionOverlay
+    const se = yield* SafeExecution
+    let confirmed = false
+    const emitConfirm: typeof noEmit = () => {
+      confirmed = true
+      return Effect.void
+    }
+    // mk('confirm').name is 't' — allow that exact tool in the live overlay.
+    yield* overlay.allowTool('t')
+    const r = yield* se.run(mk('confirm'), {}, 'id6', emitConfirm, () =>
+      Effect.succeed({ ok: true, data: 'ran' }),
+    )
+    expect(confirmed).toBe(false)
     expect(r).toStrictEqual({ ok: true, data: 'ran' })
   }).pipe(Effect.provide(layer)),
 )

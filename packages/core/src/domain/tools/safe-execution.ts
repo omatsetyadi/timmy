@@ -2,6 +2,7 @@ import { Context, Deferred, Effect, Layer } from 'effect'
 import type { Tool, ToolResult } from 'timmy-sdk'
 import { Config, Permission } from '../config/config'
 import { PendingConfirmations } from './confirmations'
+import { PermissionOverlay, mergeOverlay } from './permission-overlay'
 import { resolvePermission } from './permission-resolver'
 import { ToolSource } from './tool-source'
 
@@ -41,10 +42,14 @@ export class SafeExecution extends Context.Tag('timmy/tools/safe-execution')<
       const cfg = yield* (yield* Config).get
       // Tool → owning plugin, for plugin-level permission overrides (core tools: undefined).
       const { credentialScopeByTool } = yield* ToolSource
+      const overlay = yield* PermissionOverlay
       return {
         run: (tool, args, id, emitConfirm, execute) =>
           Effect.gen(function* () {
             const plugin = credentialScopeByTool.get(tool.name)?.plugin
+            // Read the live overlay HERE (not at layer init) and merge it over the boot config so
+            // in-session permission changes (always-allow, /permissions, Shift+Tab) apply now.
+            const ov = yield* overlay.get
             // Resolve allow/ask/block from config + the (dynamic) per-call risk. `args` matters
             // for runCommand (the command classifier); ignored for static-tier tools.
             const permission = resolvePermission({
@@ -52,7 +57,7 @@ export class SafeExecution extends Context.Tag('timmy/tools/safe-execution')<
               riskLevel: tool.riskLevel,
               args,
               plugin,
-              config: cfg.permissions,
+              config: mergeOverlay(cfg.permissions, ov),
               classify: tool.classify,
             })
             if (permission === Permission.BLOCK) return { ok: false, error: 'blocked' }

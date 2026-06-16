@@ -15,6 +15,7 @@ import { ToolRegistry } from '../tools/tool-registry'
 import { ToolSource } from '../tools/tool-source'
 import { SafeExecution } from '../tools/safe-execution'
 import { PendingConfirmations } from '../tools/confirmations'
+import { PermissionOverlay } from '../tools/permission-overlay'
 import { ProviderRegistry } from '../llm/provider-registry'
 
 const ConfigStub = Config.Live(`${process.cwd()}/__nope__.yaml`) // defaults
@@ -33,6 +34,7 @@ const EmptyToolsLayer = Layer.mergeAll(
   ),
   SafeExecution.Live.pipe(
     Layer.provide(PendingConfirmations.Live),
+    Layer.provide(PermissionOverlay.Live),
     Layer.provide(ConfigStub),
     Layer.provide(ToolSource.empty),
   ),
@@ -266,6 +268,7 @@ it.live('runs the tool-loop: tool_call -> execute -> continue -> content', () =>
             RegistryStub,
             SafeExecution.Live.pipe(
               Layer.provide(PendingConfirmations.Live),
+              Layer.provide(PermissionOverlay.Live),
               Layer.provide(ConfigStub),
               Layer.provide(ToolSource.empty),
             ),
@@ -322,6 +325,7 @@ it.live('stops at MAX_TOOL_ITERATIONS, emitting an error chunk', () =>
             ),
             SafeExecution.Live.pipe(
               Layer.provide(PendingConfirmations.Live),
+              Layer.provide(PermissionOverlay.Live),
               Layer.provide(ConfigStub),
               Layer.provide(ToolSource.empty),
             ),
@@ -416,6 +420,7 @@ it.live('confirm flow: emits confirm_required, resolves, then tool runs + conten
             RegistryStub,
             SafeExecution.Live.pipe(
               Layer.provideMerge(PendingConfirmations.Live),
+              Layer.provide(PermissionOverlay.Live),
               Layer.provide(ConfigStub),
               Layer.provide(ToolSource.empty),
             ),
@@ -483,6 +488,7 @@ it.live(
               RegistryStub,
               SafeExecution.Live.pipe(
                 Layer.provideMerge(PendingConfirmations.Live),
+                Layer.provide(PermissionOverlay.Live),
                 Layer.provide(ConfigStub),
                 Layer.provide(ToolSource.empty),
               ),
