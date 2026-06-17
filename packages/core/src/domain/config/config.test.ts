@@ -102,6 +102,18 @@ describe('memory config', () => {
   })
 })
 
+describe('assistant.voice_style', () => {
+  it('defaults to the spoken-register fragment', () => {
+    const cfg = readConfigSync('/nonexistent/path/config.yaml') // missing file → DEFAULTS
+    expect(cfg.assistant.voice_style).toMatch(/speaking out loud/i)
+  })
+
+  it('a file override replaces the default', () => {
+    const path = writeCfg(`assistant:\n  voice_style: "be brief out loud"\n`)
+    expect(readConfigSync(path).assistant.voice_style).toBe('be brief out loud')
+  })
+})
+
 describe('voice config', () => {
   it('defaults the voice block (stt empty, tts.engine local, wake.word hey_jarvis) when absent', () => {
     const cfg = readConfigSync('/nonexistent/path/config.yaml') // missing file → DEFAULTS

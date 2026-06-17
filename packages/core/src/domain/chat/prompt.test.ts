@@ -112,6 +112,49 @@ describe('user profile (name + about + style)', () => {
   })
 })
 
+describe('voice register (channel-gated voice_style fragment)', () => {
+  const cfgVoice = {
+    assistant: {
+      name: 'Timmy',
+      personality: 'Be Timmy.',
+      voice_style: 'SPEAK-SHORT-OUT-LOUD-MARKER',
+      language: { proactive: 'en', conversation: 'auto', supported: ['en'] },
+    },
+  } as TimmyConfig
+
+  it('appends the voice_style fragment only when channel is voice', () => {
+    expect(buildSystemPrompt(cfgVoice, [], false, '', 'voice')).toContain(
+      'SPEAK-SHORT-OUT-LOUD-MARKER',
+    )
+  })
+
+  it('leaves text turns untouched (default channel = text)', () => {
+    expect(buildSystemPrompt(cfgVoice, [], false, '')).not.toContain('SPEAK-SHORT-OUT-LOUD-MARKER')
+    expect(buildSystemPrompt(cfgVoice, [], false, '', 'text')).not.toContain(
+      'SPEAK-SHORT-OUT-LOUD-MARKER',
+    )
+  })
+
+  it('buildMessages threads the channel through to the system message', () => {
+    const msgs = buildMessages(cfgVoice, [], 'hi', [], false, '', 'voice')
+    expect(msgs[0].content).toContain('SPEAK-SHORT-OUT-LOUD-MARKER')
+  })
+
+  it('appends nothing when voice_style is empty — voice prompt equals text prompt', () => {
+    const empty = {
+      assistant: {
+        name: 'Timmy',
+        personality: 'Be Timmy.',
+        voice_style: '   ',
+        language: { proactive: 'en', conversation: 'auto', supported: ['en'] },
+      },
+    } as TimmyConfig
+    expect(buildSystemPrompt(empty, [], false, '', 'voice')).toEqual(
+      buildSystemPrompt(empty, [], false, '', 'text'),
+    )
+  })
+})
+
 describe('recalled memory block', () => {
   const block = '## What you know about the user\n- person: Omat {role: founder}'
   it('appends the memory block to the system message when provided', () => {

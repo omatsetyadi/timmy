@@ -2,11 +2,14 @@ import type { TimmyConfig } from '../config/config'
 import type { MessageRow } from '../persistence/thread-store'
 import type { ChatMessage } from '../llm/llm-client'
 
+export type Channel = 'text' | 'voice'
+
 export function buildSystemPrompt(
   config: TimmyConfig,
   reasoningTargets: readonly string[] = [],
   claudeAvailable = false,
   memoryBlock = '',
+  channel: Channel = 'text',
 ): string {
   const a = config.assistant
   const u = config.user
@@ -48,6 +51,12 @@ export function buildSystemPrompt(
   if (memoryBlock.trim()) {
     p += `\n\n${memoryBlock.trim()}`
   }
+  // Voice register: spoken turns only. Appended last so it's the most salient instruction for this
+  // turn. Prompt guidance, NOT a code cap — the model still gives a full answer when asked.
+  if (channel === 'voice') {
+    const vs = a.voice_style?.trim()
+    if (vs) p += `\n\n${vs}`
+  }
   return p
 }
 
@@ -58,11 +67,12 @@ export function buildMessages(
   reasoningTargets: readonly string[] = [],
   claudeAvailable = false,
   memoryBlock = '',
+  channel: Channel = 'text',
 ): ChatMessage[] {
   const msgs: ChatMessage[] = [
     {
       role: 'system',
-      content: buildSystemPrompt(config, reasoningTargets, claudeAvailable, memoryBlock),
+      content: buildSystemPrompt(config, reasoningTargets, claudeAvailable, memoryBlock, channel),
     },
   ]
   for (const m of history) msgs.push({ role: m.role as ChatMessage['role'], content: m.content })

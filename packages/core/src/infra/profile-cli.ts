@@ -11,7 +11,7 @@ export type Raw = Record<string, unknown>
  *  `assistant.*` = the agent itself; `user.*` = the human. All user-authored — the agent
  *  never writes them (distinct from the auto-learned memory graph). */
 const SECTION_FIELDS = {
-  assistant: ['name', 'personality'],
+  assistant: ['name', 'personality', 'voice_style'],
   user: ['name', 'about', 'style'],
 } as const
 type Section = keyof typeof SECTION_FIELDS
@@ -76,7 +76,12 @@ export function applyLanguageEdit(
 
 /** Human-readable dump of both sections (used by `timmy profile show`). */
 export function formatProfile(
-  assistant: { name?: string; personality?: string; language?: LanguageBlock },
+  assistant: {
+    name?: string
+    personality?: string
+    voice_style?: string
+    language?: LanguageBlock
+  },
   user: { name?: string; about?: string; style?: string },
 ): string {
   const v = (s?: string) => (s && s.trim() ? s : '(unset)')
@@ -88,6 +93,7 @@ export function formatProfile(
     'Assistant (it):',
     `  name       : ${v(assistant.name)}`,
     `  personality: ${v(assistant.personality)}`,
+    `  voice_style: ${v(assistant.voice_style)}`,
     `  language   : ${langLine}`,
     'You (the user):',
     `  name       : ${v(user.name)}`,
@@ -137,7 +143,7 @@ const isField = (section: Section, f: string | undefined): f is Field =>
 
 const USAGE =
   'Usage: timmy profile <show | set <assistant|user> <field> <text…> | edit <assistant|user> <field> | clear <assistant|user> <field>>\n' +
-  '  assistant fields: name, personality, language <conversation|proactive|supported>\n' +
+  '  assistant fields: name, personality, voice_style, language <conversation|proactive|supported>\n' +
   '  user fields: name, about, style'
 
 const LANG_USAGE =
@@ -194,6 +200,7 @@ export function profile(args: readonly string[]): void {
         {
           name: cfg.assistant.name,
           personality: cfg.assistant.personality,
+          voice_style: cfg.assistant.voice_style,
           language: cfg.assistant.language,
         },
         { name: cfg.user?.name, about: cfg.user?.about, style: cfg.user?.style },
@@ -229,11 +236,14 @@ export function profile(args: readonly string[]): void {
 
   if (sub === 'edit') {
     const cfg = readConfigSync()
+    const assistantFields: Record<string, string> = {
+      name: cfg.assistant.name,
+      personality: cfg.assistant.personality,
+      voice_style: cfg.assistant.voice_style,
+    }
     const current =
       section === 'assistant'
-        ? field === 'personality'
-          ? cfg.assistant.personality
-          : cfg.assistant.name
+        ? (assistantFields[field] ?? '')
         : (cfg.user?.[field as 'name' | 'about' | 'style'] ?? '')
     const next = editInEditor(current)
     writeField(section, field, next || null)

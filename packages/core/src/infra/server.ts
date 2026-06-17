@@ -78,14 +78,20 @@ export async function buildServer(
   // Streaming chat: newline-delimited JSON. First line {thread_id}, then typed
   // chunk lines as tokens arrive, final {done:true}.
   app.post('/chat', async (req, reply) => {
-    const body = (req.body ?? {}) as { message?: string; thread_id?: string }
+    const body = (req.body ?? {}) as { message?: string; thread_id?: string; channel?: 'voice' }
     if (!body.message || typeof body.message !== 'string') {
       return reply.code(400).send({ error: 'message (string) is required' })
     }
 
     const sent = await runtime.runPromise(
       ChatService.pipe(
-        Effect.flatMap((c) => c.send({ message: body.message!, threadId: body.thread_id })),
+        Effect.flatMap((c) =>
+          c.send({
+            message: body.message!,
+            threadId: body.thread_id,
+            channel: body.channel === 'voice' ? 'voice' : 'text',
+          }),
+        ),
         Effect.either,
       ),
     )
@@ -253,40 +259,50 @@ export async function buildServer(
       }
     }
 
-    socket.on('chat', async (body: { message?: string; thread_id?: string }) => {
-      if (!body?.message || typeof body.message !== 'string') {
-        socket.emit('chunk', { type: 'error', message: 'message (string) is required' })
-        socket.emit('done', {})
-        return
-      }
-      // One turn per socket: a new utterance (or barge-in) interrupts the in-flight turn first.
-      interruptActive()
-      const sent = await runtime.runPromise(
-        ChatService.pipe(
-          Effect.flatMap((c) => c.send({ message: body.message!, threadId: body.thread_id })),
-          Effect.either,
-        ),
-      )
-      if (Either.isLeft(sent)) {
-        socket.emit('chunk', { type: 'error', message: sent.left.message })
-        socket.emit('done', {})
-        return
-      }
-      const { threadId, stream } = sent.right
-      socket.emit('thread', { thread_id: threadId })
-      let turn: Fiber.RuntimeFiber<void, unknown> | null = null
-      turn = pumpChat(runtime, app.log, stream, {
-        chunk: (chunk) => socket.emit('chunk', chunk),
-        error: (message) => socket.emit('chunk', { type: 'error', message }),
-        done: () => {
-          // Only clear if THIS turn is still active — guards against a just-interrupted
-          // turn's finalizer nulling out a newer turn started by a barge-in.
-          if (active === turn) active = null
+    socket.on(
+      'chat',
+      async (body: { message?: string; thread_id?: string; channel?: 'voice' | 'text' }) => {
+        if (!body?.message || typeof body.message !== 'string') {
+          socket.emit('chunk', { type: 'error', message: 'message (string) is required' })
           socket.emit('done', {})
-        },
-      })
-      active = turn
-    })
+          return
+        }
+        // One turn per socket: a new utterance (or barge-in) interrupts the in-flight turn first.
+        interruptActive()
+        // The voice daemon connects here and tags turns `channel: 'voice'` (defaults to text if absent).
+        const sent = await runtime.runPromise(
+          ChatService.pipe(
+            Effect.flatMap((c) =>
+              c.send({
+                message: body.message!,
+                threadId: body.thread_id,
+                channel: body.channel === 'voice' ? 'voice' : 'text',
+              }),
+            ),
+            Effect.either,
+          ),
+        )
+        if (Either.isLeft(sent)) {
+          socket.emit('chunk', { type: 'error', message: sent.left.message })
+          socket.emit('done', {})
+          return
+        }
+        const { threadId, stream } = sent.right
+        socket.emit('thread', { thread_id: threadId })
+        let turn: Fiber.RuntimeFiber<void, unknown> | null = null
+        turn = pumpChat(runtime, app.log, stream, {
+          chunk: (chunk) => socket.emit('chunk', chunk),
+          error: (message) => socket.emit('chunk', { type: 'error', message }),
+          done: () => {
+            // Only clear if THIS turn is still active — guards against a just-interrupted
+            // turn's finalizer nulling out a newer turn started by a barge-in.
+            if (active === turn) active = null
+            socket.emit('done', {})
+          },
+        })
+        active = turn
+      },
+    )
 
     socket.on('confirm', (body: { id?: string; decision?: 'once' | 'always' | 'deny' }) => {
       if (!body?.id) return

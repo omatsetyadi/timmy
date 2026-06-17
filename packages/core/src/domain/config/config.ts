@@ -9,10 +9,12 @@ export interface FrontdeskConfig {
   base_url?: string
   model: string
 }
-/** The assistant — its own identity. `name` = what it's called; `personality` = its character/voice. */
+/** The assistant — its own identity. `name` = what it's called; `personality` = its character/voice.
+ *  `voice_style` = an extra register fragment appended ONLY on voice-channel turns (spoken replies). */
 export interface AssistantConfig {
   name: string
   personality: string
+  voice_style: string
   language: { proactive: string; conversation: string; supported: string[] }
 }
 
@@ -110,6 +112,14 @@ const DEFAULT_PERSONALITY =
   `Only claim an action succeeded if a tool result confirms it. If there's no tool or native way to do something, ` +
   `say so plainly after a reasonable attempt — don't brute-force the shell over and over.`
 
+// Appended to the system prompt ONLY on voice-channel turns (spoken replies). Prompt-shaped guidance,
+// NOT a code-level length cap — the model self-regulates and gives a full answer the moment it's asked.
+const DEFAULT_VOICE_STYLE =
+  `You're speaking out loud, not writing. Keep replies short and conversational — usually one or two ` +
+  `sentences. No markdown, lists, or headings. Lead with the answer. When there's more worth saying, ` +
+  `give the short version and offer it — "want the details?" — and expand only if asked. A full, long ` +
+  `answer is welcome the moment they ask for it. Talk like a person, not a document.`
+
 const DEFAULTS: TimmyConfig = {
   server: { host: '127.0.0.1', port: 3737, auth: { enabled: true, token: 'keychain' } },
   models: {
@@ -119,6 +129,7 @@ const DEFAULTS: TimmyConfig = {
   assistant: {
     name: 'Timmy',
     personality: DEFAULT_PERSONALITY,
+    voice_style: DEFAULT_VOICE_STYLE,
     language: { proactive: 'en', conversation: 'auto', supported: ['en', 'id'] },
   },
   voice: {

@@ -569,6 +569,7 @@ Profile (the assistant's identity + your own profile, injected into every system
   profile show                       Show both sections (assistant + you)
   profile set assistant name <t…>    Rename the assistant (default: Timmy)
   profile set assistant personality <t…>   Set the assistant's character/voice
+  profile set assistant voice_style <t…>   Extra style for SPOKEN replies (voice turns only)
   profile set user name <t…>         Your name (so it can address you)
   profile set user about <t…>        Who you are (grounding)
   profile set user style <t…>        How the assistant should respond to you

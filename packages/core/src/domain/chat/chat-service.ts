@@ -9,7 +9,7 @@ import { SafeExecution } from '../tools/safe-execution'
 import type { StreamChunk, ToolCallChunk } from '../llm/stream-chunk'
 import type { LlmError } from '../llm/errors'
 import { ChatValidationError, type ChatError } from './errors'
-import { buildMessages } from './prompt'
+import { buildMessages, type Channel } from './prompt'
 import { extractImagePaths, attachImages } from './image-attach'
 import { ProviderRegistry } from '../llm/provider-registry'
 import { Recall } from '../memory/recall'
@@ -18,6 +18,8 @@ import { Extractor } from '../memory/extract'
 export interface SendParams {
   message: string
   threadId?: string
+  /** Which channel the turn came from. `voice` appends the spoken-register prompt fragment. */
+  channel?: Channel
 }
 
 /** Bounded agentic loop: stop after this many tool-result rounds. This is a runaway backstop,
@@ -76,6 +78,7 @@ export class ChatService extends Context.Tag('timmy/chat/service')<
             pool.map((t) => t.id),
             claudeAvailable,
             block,
+            p.channel ?? 'text',
           )
           yield* store.addMessage(threadId, 'user', p.message)
 
