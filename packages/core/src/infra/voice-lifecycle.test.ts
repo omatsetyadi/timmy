@@ -19,9 +19,7 @@ describe('isVoiceInstalled', () => {
 })
 
 describe('preflight', () => {
-  it('reports python + uv presence as booleans', () => {
-    const p = preflight()
-    expect(typeof p.python).toBe('boolean')
-    expect(typeof p.uv).toBe('boolean')
+  it('reports uv presence as a boolean (uv provisions its own Python — no python check)', () => {
+    expect(typeof preflight().uv).toBe('boolean')
   })
 })

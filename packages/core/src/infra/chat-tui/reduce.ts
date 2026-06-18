@@ -4,6 +4,7 @@ export type TurnPart =
   | { type: 'text'; text: string }
   | { type: 'tool'; name: string }
   | { type: 'memory'; entities: string[] }
+  | { type: 'error'; message: string }
 export interface TranscriptItem {
   role: 'user' | 'assistant'
   parts: TurnPart[]
@@ -22,6 +23,20 @@ export interface ChatState {
 }
 
 export const initialState = (): ChatState => ({ transcript: [], parts: [] })
+
+/** Turn a raw provider/stream error into an actionable one-liner by appending a hint for the common
+ *  HTTP statuses. Pure — the status is sniffed from the message text (errors arrive as plain strings).
+ *  Unrecognized messages pass through unchanged so we never hide the original. */
+export function friendlyError(message: string): string {
+  const hint = /\b(401|403)\b/.test(message)
+    ? 'check your API key (`timmy model set-key <provider>`)'
+    : /\b404\b/.test(message)
+      ? 'check the model name / provider in `timmy model status`'
+      : /\b429\b/.test(message)
+        ? "rate limited — wait a moment, or you've hit the provider's quota"
+        : ''
+  return hint ? `${message} — ${hint}` : message
+}
 
 /** Push a user message into the committed transcript (called when the user submits). */
 export const withUserMessage = (s: ChatState, text: string): ChatState => ({
@@ -52,6 +67,10 @@ export function reduceFrame(s: ChatState, f: ChatFrame): ChatState {
       }
       if (f.chunk.type === 'tool_call')
         return { ...s, parts: [...s.parts, { type: 'tool', name: f.chunk.toolCall.name }] }
+      // An error chunk must NEVER be silently dropped — surface it as a visible part so a provider
+      // 404/401/rate-limit shows up plainly instead of an empty "no response" turn.
+      if (f.chunk.type === 'error')
+        return { ...s, parts: [...s.parts, { type: 'error', message: f.chunk.message }] }
       return s
     case 'done':
       return {

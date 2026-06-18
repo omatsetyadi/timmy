@@ -1,7 +1,28 @@
 import { createHash } from 'node:crypto'
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { basename, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+
+/** Sidecar file recording the GitHub source a plugin was installed from — so `plugin update` can
+ *  re-fetch the same source. Written by {@link installFromGithub}; absent for local installs. */
+const SOURCE_FILE = '.source'
+
+/** The GitHub source a plugin was installed from, or null if none was recorded (local install or a
+ *  plugin installed before sources were tracked — those can't be auto-updated). */
+export function readPluginSource(pluginDir: string): string | null {
+  const f = join(pluginDir, SOURCE_FILE)
+  if (!existsSync(f)) return null
+  const s = readFileSync(f, 'utf8').trim()
+  return s === '' ? null : s
+}
 
 /** Derive a plugin's install name from a source path, robust to a trailing slash:
  *  `installLocal('./foo/')` and `installLocal('./foo')` both yield `foo`. */
@@ -190,6 +211,8 @@ export async function installFromGithub(
   rmSync(dest, { recursive: true, force: true })
   mkdirSync(dest, { recursive: true })
   writeFileSync(join(dest, 'index.js'), data)
+  // Record the source so `plugin update` can re-fetch the same release later.
+  writeFileSync(join(dest, SOURCE_FILE), source)
   return repo
 }
 

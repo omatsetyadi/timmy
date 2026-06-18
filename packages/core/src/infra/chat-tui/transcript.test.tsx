@@ -45,4 +45,16 @@ describe('Transcript', () => {
     expect(out).toContain('Omat')
     expect(out).toContain('Jitera')
   })
+
+  it('renders an error part as a visible ⚠ line with an actionable hint', () => {
+    const r = render(
+      <Transcript
+        items={[{ role: 'assistant', parts: [{ type: 'error', message: 'chat failed (404)' }] }]}
+      />,
+    )
+    const out = r.frames.join('\n')
+    expect(out).toContain('⚠')
+    expect(out).toContain('chat failed (404)')
+    expect(out).toMatch(/check the model.*provider/i)
+  })
 })

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { initialState, reduceFrame, withUserMessage, type ChatState } from './reduce'
+import { friendlyError, initialState, reduceFrame, withUserMessage, type ChatState } from './reduce'
 
 const s0 = initialState()
 
@@ -41,12 +41,33 @@ describe('reduceFrame', () => {
       { type: 'text', text: 'done' },
     ])
   })
-  it('non-content/tool chunks leave state unchanged', () => {
+  it('non-content/tool chunks (usage) leave state unchanged', () => {
     const s = reduceFrame(s0, {
       kind: 'chunk',
       chunk: { type: 'usage', promptTokens: 1, completionTokens: 2 },
     })
     expect(s).toBe(s0)
+  })
+  it('an error chunk pushes a visible error part (never silently dropped)', () => {
+    const s = reduceFrame(s0, {
+      kind: 'chunk',
+      chunk: { type: 'error', message: 'chat failed (500)' },
+    })
+    expect(s.parts).toEqual([{ type: 'error', message: 'chat failed (500)' }])
+  })
+  it('error parts after text preserve order and commit to the transcript on done', () => {
+    let s = reduceFrame(s0, { kind: 'chunk', chunk: { type: 'content', content: 'partial' } })
+    s = reduceFrame(s, { kind: 'chunk', chunk: { type: 'error', message: 'boom' } })
+    s = reduceFrame(s, { kind: 'done' })
+    expect(s.transcript).toEqual([
+      {
+        role: 'assistant',
+        parts: [
+          { type: 'text', text: 'partial' },
+          { type: 'error', message: 'boom' },
+        ],
+      },
+    ])
   })
   it('a memory frame appends a memory part to the in-progress turn', () => {
     const s = reduceFrame(initialState(), { kind: 'memory', entities: ['Omat', 'Jitera'] })
@@ -98,5 +119,21 @@ describe('reduceFrame', () => {
     expect(s.transcript).toEqual([
       { role: 'user', parts: [{ type: 'text', text: 'open photo booth' }] },
     ])
+  })
+})
+
+describe('friendlyError', () => {
+  it('appends an API-key hint for a 401/403', () => {
+    expect(friendlyError('chat failed (401)')).toMatch(/check your API key/i)
+    expect(friendlyError('request failed: 403 Forbidden')).toMatch(/check your API key/i)
+  })
+  it('appends a model/provider hint for a 404', () => {
+    expect(friendlyError('chat failed (404)')).toMatch(/check the model.*provider/i)
+  })
+  it('appends a rate-limit hint for a 429', () => {
+    expect(friendlyError('429 Too Many Requests')).toMatch(/rate limit/i)
+  })
+  it('leaves an unrecognized error message unchanged', () => {
+    expect(friendlyError('something odd happened')).toBe('something odd happened')
   })
 })

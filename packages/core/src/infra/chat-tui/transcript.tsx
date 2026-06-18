@@ -1,6 +1,6 @@
 import React from 'react'
 import { Box, Static, Text } from 'ink'
-import type { TranscriptItem, TurnPart } from './reduce'
+import { friendlyError, type TranscriptItem, type TurnPart } from './reduce'
 
 export function Parts({ parts }: { parts: TurnPart[] }): React.ReactElement {
   return (
@@ -20,6 +20,8 @@ export function Parts({ parts }: { parts: TurnPart[] }): React.ReactElement {
               dimColor
             >{`  ◆ recalled: ${p.entities.join(' · ')}`}</Text>
           )
+        if (p.type === 'error')
+          return <Text key={i} color="red">{`  ⚠ ${friendlyError(p.message)}`}</Text>
         return <Text key={i} color="cyan">{`  ⏺ ${p.name}`}</Text>
       })}
     </>

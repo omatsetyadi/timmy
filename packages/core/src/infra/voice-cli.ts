@@ -9,6 +9,7 @@ import {
   startVoice,
   stopVoice,
   uninstallVoice,
+  updateVoice,
   voiceLifecycleStatus,
   VOICE_PATHS,
 } from './voice-lifecycle'
@@ -174,7 +175,7 @@ export const voiceStatus = (): VoiceConfig => readConfigSync().voice
 // ── command ──────────────────────────────────────────────────────────────────
 
 const USAGE =
-  'Usage: timmy voice <install|start|stop|status|logs|uninstall|engine|speaker|rate|wake import|openai|set>'
+  'Usage: timmy voice <install|update|start|stop|status|logs|uninstall|engine|speaker|rate|wake import|openai|set>'
 
 const applied = (msg: string): void => console.log(`${msg}   (restart Timmy to apply)`)
 const fail = (msg: string): never => {
@@ -215,18 +216,14 @@ async function wakeImport(): Promise<void> {
   }
 }
 
-/** `timmy voice install` — preflight (no silent installs), then clone + uv sync after a y/N prompt. */
+/** `timmy voice install` — self-sufficient: bootstrap uv (+ its managed Python) if needed, then clone
+ *  + `uv sync` after a y/N prompt. No preinstalled Python/uv required. */
 async function voiceInstallFlow(): Promise<void> {
   const pre = preflight()
-  const mark = (ok: boolean): string => (ok ? '✓' : '✗')
-  console.log('Timmy voice needs:')
-  console.log(`  ${mark(pre.python)} Python 3.11+`)
-  console.log(`  ${mark(pre.uv)} uv`)
-  console.log('  ✗ voice daemon  (clone + uv sync into ~/.timmy/voice)')
-  if (!pre.python)
-    return fail('Install Python 3.11+ first (e.g. `brew install python@3.12`), then re-run.')
-  if (!pre.uv)
-    return fail('Install uv first: `curl -LsSf https://astral.sh/uv/install.sh | sh`, then re-run.')
+  console.log('Timmy voice will set up a hands-free voice daemon (fully isolated, via uv):')
+  console.log(`  ${pre.uv ? '✓ uv present' : '• install uv (astral.sh — one script)'}`)
+  console.log('  • a private Python (uv-managed — no system Python needed)')
+  console.log('  • the voice daemon + audio/ML deps → ~/.timmy/voice  (~1GB first download)')
   const rl = createInterface({ input: process.stdin, output: process.stdout })
   const ans = await new Promise<string>((resolve) =>
     rl.question('Install now? [y/N] ', (a) => resolve(a.trim().toLowerCase())),
@@ -235,13 +232,17 @@ async function voiceInstallFlow(): Promise<void> {
   if (ans !== 'y' && ans !== 'yes') return void console.log('Cancelled.')
   let r
   try {
-    r = installVoice() // clone + uv sync — can throw on a network/build failure
+    r = installVoice() // bootstrap uv + clone + uv sync — can throw on a network/build failure
   } catch (e) {
     return fail(`Install failed: ${e instanceof Error ? e.message : String(e)}`)
   }
   if (r.ok) return void console.log('Voice installed.  Start it with: timmy voice start')
   if (r.reason === 'already-installed') return void console.log('Voice is already installed.')
-  return fail(`Install failed (${r.reason}).`)
+  // uv-unavailable: the bootstrap couldn't get uv (offline / curl blocked).
+  return fail(
+    'Could not install uv automatically. Install it manually, then re-run:\n' +
+      '  curl -LsSf https://astral.sh/uv/install.sh | sh',
+  )
 }
 
 /** `timmy voice <install|start|stop|status|logs|uninstall|engine|speaker|rate|wake|openai|set>` —
@@ -293,6 +294,17 @@ export async function voice(args: readonly string[]): Promise<void> {
       }
       case 'install':
         return voiceInstallFlow()
+      case 'update': {
+        console.log('Updating voice (git pull origin main + uv sync)…')
+        const r = updateVoice()
+        if (r.ok)
+          return void console.log(r.restarted ? 'Voice updated and restarted.' : 'Voice updated.')
+        if (r.reason === 'not-installed')
+          return fail('Voice is not installed. Run: timmy voice install')
+        return fail(
+          'uv not found. Install it, then re-run: curl -LsSf https://astral.sh/uv/install.sh | sh',
+        )
+      }
       case 'autostart': {
         const v = args[1]
         if (v !== 'on' && v !== 'off') return fail('Usage: timmy voice autostart <on|off>')

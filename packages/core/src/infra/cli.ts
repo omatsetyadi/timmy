@@ -1,7 +1,7 @@
 import { Effect } from 'effect'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { mkdirSync, existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import {
   CONFIG_DIR,
@@ -20,6 +20,7 @@ import {
   isGithubSource,
   listInstalled,
   readInstalledManifest,
+  readPluginSource,
   remove,
 } from './plugin-cli'
 import {
@@ -45,7 +46,7 @@ import { buildRuntime } from './runtime'
 import { buildServer } from './server'
 import { isRunning, startBackground, stop, type DaemonPaths } from './daemon-supervisor'
 import { AUTOSTART_LABEL, disableAutostart, enableAutostart, isAutostartEnabled } from './autostart'
-import { installVoice, isVoiceInstalled, preflight, startVoice, stopVoice } from './voice-lifecycle'
+import { installVoice, isVoiceInstalled, startVoice, stopVoice } from './voice-lifecycle'
 
 const VERSION = '0.1.0'
 
@@ -113,6 +114,47 @@ async function startForeground(): Promise<void> {
 function stopDaemon(): void {
   const r = stop(CORE_PATHS)
   console.log('stopped' in r ? `Timmy stopped (pid ${r.stopped}).` : 'Timmy is not running.')
+}
+
+/** The official one-line installer — `timmy update` re-runs it (verified download + atomic replace). */
+const INSTALL_URL = 'https://raw.githubusercontent.com/omatsetyadi/timmy/main/install.sh'
+
+/** `timmy update` — fetch the latest release binary via the official installer (checksum-verified,
+ *  replaces the binary in place), then restart the daemon if it was running. Only meaningful for an
+ *  installed single binary; a dev checkout runs from source, so it points the user at git instead.
+ *  Replacing a running executable in place is safe on macOS/Linux — the live process keeps its open
+ *  inode, and the new file is picked up on the next launch (the restart below). */
+function update(): void {
+  const entry = process.argv[1] ?? ''
+  const compiledBinary = entry.startsWith('/$bunfs/') || entry.includes('~BUN')
+  if (!compiledBinary) {
+    console.error(
+      '`timmy update` updates an installed binary. In a dev checkout, pull with git and rebuild.',
+    )
+    process.exit(1)
+  }
+  const binDir = dirname(process.execPath)
+  const wasRunning = isRunning(CORE_PATHS) !== null
+  console.log(`Updating Timmy in ${binDir}…`)
+  try {
+    // Reuse install.sh — it verifies the SHA256 before replacing. TIMMY_BIN_DIR pins it to THIS
+    // install's location (not the default ~/.local/bin) so we update the binary the user actually runs.
+    execFileSync('sh', ['-c', `curl -fsSL ${INSTALL_URL} | sh`], {
+      stdio: 'inherit',
+      env: { ...process.env, TIMMY_BIN_DIR: binDir },
+    })
+  } catch {
+    console.error('Update failed — see the output above. Your existing install is unchanged.')
+    process.exit(1)
+  }
+  if (!wasRunning) {
+    console.log('Updated.  Start Timmy with: timmy start')
+    return
+  }
+  // The live daemon is still the OLD code — stop it and launch the freshly-installed binary.
+  stopDaemon()
+  execFileSync(process.execPath, ['start'], { stdio: 'inherit' })
+  console.log('Updated and restarted on the new version.')
 }
 
 /** `timmy autostart on|off|status` — manage the launch-on-login agent (macOS LaunchAgent). */
@@ -254,6 +296,39 @@ async function plugin(args: readonly string[]): Promise<void> {
     return
   }
 
+  if (sub === 'update') {
+    const target = args[1]
+    if (target === undefined) {
+      console.error('Usage: timmy plugin update <name> | --all')
+      process.exit(1)
+    }
+    const all = listInstalled(pluginsDir)
+    const names = target === '--all' ? all : [target]
+    if (target !== '--all' && !all.includes(target)) {
+      console.error(`plugin '${target}' not found`)
+      process.exit(1)
+    }
+    let updated = 0
+    for (const name of names) {
+      const source = readPluginSource(join(pluginsDir, name))
+      if (!source) {
+        console.log(`  – ${name}: no recorded GitHub source — skip (reinstall to enable updates)`)
+        continue
+      }
+      try {
+        await installFromGithub(source, pluginsDir)
+        console.log(`  ✓ ${name} updated from ${source}`)
+        updated++
+      } catch (e) {
+        console.log(`  ✗ ${name}: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
+    console.log(
+      `Updated ${updated}/${names.length}.  Restart Timmy to load the new code: timmy stop && timmy start`,
+    )
+    return
+  }
+
   if (sub === 'list') {
     const names = listInstalled(pluginsDir)
     if (names.length === 0) {
@@ -283,7 +358,7 @@ async function plugin(args: readonly string[]): Promise<void> {
   }
 
   console.error(
-    'Usage: timmy plugin <install <path|github-url>|list|remove <name>|set-key <plugin> <key>>',
+    'Usage: timmy plugin <install <path|github-url>|update <name|--all>|list|remove <name>|set-key <plugin> <key>>',
   )
   process.exit(1)
 }
@@ -619,32 +694,28 @@ async function init(): Promise<void> {
     }
 
     // Voice (optional, hands-free) — a separate Python daemon (clone + uv sync). Heavy + a mic-privacy
-    // choice, so default NO. Mirrors `timmy voice install` (preflight, no silent toolchain installs).
+    // choice, so default NO. Self-sufficient: installVoice bootstraps uv + its own managed Python, so
+    // there's NO Python/uv prerequisite — a non-technical user needs nothing preinstalled.
     console.log(
-      '\nVoice (optional) — hands-free: say a wake word and talk. Needs Python 3.11+ and uv.',
+      '\nVoice (optional) — hands-free: say a wake word and talk. Installs a fully isolated\n' +
+        '  voice daemon (uv + a private Python + audio/ML deps, ~1GB) — nothing preinstalled needed.',
     )
     const wantVoice = (await ask('Install Timmy voice now? (y/N) ')).toLowerCase()
     if (wantVoice === 'y' || wantVoice === 'yes') {
-      const pre = preflight()
-      if (!pre.python) {
-        console.log('  ✗ Python 3.11+ not found — install it, then run `timmy voice install`.')
-      } else if (!pre.uv) {
+      console.log('  setting up voice (installs uv + a private Python if needed)…')
+      try {
+        const r = installVoice() // bootstrap uv + clone + uv sync (progress streams to the terminal)
         console.log(
-          '  ✗ uv not found — `curl -LsSf https://astral.sh/uv/install.sh | sh`, then `timmy voice install`.',
+          r.ok
+            ? '  ✓ voice installed — start it with `timmy voice start` (or `timmy voice autostart on`)'
+            : r.reason === 'already-installed'
+              ? '  ✓ voice already installed'
+              : '  ✗ could not install uv automatically — `curl -LsSf https://astral.sh/uv/install.sh | sh`, then `timmy voice install`',
         )
-      } else {
-        try {
-          const r = installVoice() // clone + uv sync (progress streams to the terminal)
-          console.log(
-            r.ok
-              ? '  ✓ voice installed — start it with `timmy voice start` (or `timmy voice autostart on`)'
-              : `  ✗ voice install failed (${r.reason}) — retry with \`timmy voice install\``,
-          )
-        } catch (e) {
-          // A clone/uv-sync failure must never abort init (config + plugins are already done).
-          const msg = e instanceof Error ? e.message : String(e)
-          console.log(`  ✗ voice install failed: ${msg} — retry later with \`timmy voice install\``)
-        }
+      } catch (e) {
+        // A clone/uv-sync failure must never abort init (config + plugins are already done).
+        const msg = e instanceof Error ? e.message : String(e)
+        console.log(`  ✗ voice install failed: ${msg} — retry later with \`timmy voice install\``)
       }
     } else {
       console.log('  skipped — add later with `timmy voice install`')
@@ -672,11 +743,13 @@ Core:
   autostart <on|off|status>          Start Timmy at login (macOS LaunchAgent)
   chat [--thread <id>]               Interactive terminal chat with the running daemon
   status                             Check whether the running daemon is reachable
+  update                             Update Timmy itself to the latest release (re-fetch the binary, restart)
   help, --help, -h                   Show this help
   version, --version, -v             Print the version
 
 Plugins:
   plugin install <path|github-url>   Install a plugin (local dir, github:user/repo, or a github.com URL)
+  plugin update [<name>|--all]       Re-fetch installed plugin(s) from their GitHub release
   plugin list                        List installed plugins
   plugin remove <name>               Remove an installed plugin
   plugin set-key <plugin> <key>      Store a plugin API key (reads stdin), e.g. \`plugin set-key web tavily_api_key\`
@@ -726,6 +799,9 @@ Voice (settings for the voice daemon; language uses profile's assistant language
   voice engine <local|openai>        TTS engine — local = offline, openai = cloud
   voice speaker <name>               Local English voice (Kokoro, e.g. bm_fable)
   voice rate <float>                 Local speaking rate (e.g. 1.0)
+  voice install                      Install the voice daemon (bootstraps uv + a private Python — no prereqs)
+  voice update                       Pull the latest voice daemon (git + uv sync) and restart it
+  voice start | stop                 Start / stop the voice daemon
   voice wake import                  (Re)import the wake word — prompts: trained .onnx path → display phrase
   voice openai <voice|model|instructions> <value>   OpenAI TTS settings (when engine=openai)
   voice status                       Show the effective voice config
@@ -745,6 +821,7 @@ export function run(): void {
   else if (cmd === 'init') void init()
   else if (cmd === 'chat') void chat(process.argv.slice(3))
   else if (cmd === 'status') void status()
+  else if (cmd === 'update') update()
   else if (cmd === 'plugin') void plugin(process.argv.slice(3))
   else if (cmd === 'model') void model(process.argv.slice(3))
   else if (cmd === 'permission') permission(process.argv.slice(3))

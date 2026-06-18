@@ -16,6 +16,7 @@ import {
   parseGithubSource,
   pluginReleaseUrls,
   readInstalledManifest,
+  readPluginSource,
   remove,
   verifyChecksum,
   type DefaultPlugin,
@@ -348,6 +349,24 @@ describe('installFromGithub (fetch prebuilt release bundle)', () => {
     expect(readFileSync(join(dest, 'timmy-plugin-web', 'index.js'), 'utf8')).toContain(
       'name: "web"',
     )
+  })
+
+  it('records the install source so `plugin update` can re-fetch it', async () => {
+    const bundle = Buffer.from('module.exports.default = { name: "web", tools: [] }')
+    const sums = `${createHash('sha256').update(bundle).digest('hex')}  index.js\n`
+    const base = await serve(bundle, sums)
+    const dest = emptyPluginsDir()
+
+    await installFromGithub('github:omatsetyadi/timmy-plugin-web', dest, base)
+    expect(readPluginSource(join(dest, 'timmy-plugin-web'))).toBe(
+      'github:omatsetyadi/timmy-plugin-web',
+    )
+  })
+
+  it('readPluginSource returns null for a plugin with no recorded source (e.g. local install)', () => {
+    const dest = emptyPluginsDir()
+    mkdirSync(join(dest, 'local-plugin'), { recursive: true })
+    expect(readPluginSource(join(dest, 'local-plugin'))).toBeNull()
   })
 
   it('refuses (and writes nothing) when the checksum does not match', async () => {
