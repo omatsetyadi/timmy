@@ -32,11 +32,15 @@ export const moveRight = (s: EditorState): EditorState => ({
 })
 
 /** Delete from the cursor back to the previous word boundary (trailing spaces then a run of
- *  non-space); text AFTER the cursor is preserved. */
+ *  non-space); text AFTER the cursor is preserved. Bounded to the CURRENT line — at a line start it
+ *  is a no-op rather than crossing the '\n' and eating the previous line's word. */
 export function deleteWord(s: EditorState): EditorState {
   const before = s.value.slice(0, s.cursor)
-  const trimmed = before.replace(/\s+$/, '').replace(/\S+$/, '')
-  return { value: trimmed + s.value.slice(s.cursor), cursor: trimmed.length }
+  const lineStart = before.lastIndexOf('\n') + 1 // start of the current line (0 if none)
+  const inLine = before.slice(lineStart) // current line up to the cursor — contains no '\n'
+  const trimmed = inLine.replace(/\s+$/, '').replace(/\S+$/, '')
+  const kept = before.slice(0, lineStart) + trimmed
+  return { value: kept + s.value.slice(s.cursor), cursor: kept.length }
 }
 
 /** Delete from the cursor back to the start of the current line (after the previous '\n');

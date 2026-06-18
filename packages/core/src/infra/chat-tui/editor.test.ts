@@ -62,6 +62,18 @@ describe('editor', () => {
       cursor: 4,
     })
   })
+  it('deleteWord stays within the current line — at line start it is a no-op (keeps the prev line)', () => {
+    // cursor at the start of line 2 (just after '\n', index 6): must NOT eat 'hello' on line 1.
+    expect(deleteWord({ value: 'hello\nworld', cursor: 6 })).toEqual({
+      value: 'hello\nworld',
+      cursor: 6,
+    })
+    // mid-line-2: deletes only line-2's word, the '\n' + line 1 untouched.
+    expect(deleteWord({ value: 'hello\nfoo bar', cursor: 13 })).toEqual({
+      value: 'hello\nfoo ',
+      cursor: 10,
+    })
+  })
   it('deleteToLineStart deletes back to the current line start, preserving text after', () => {
     // before='a\nbc de' nl@1 keep='a\n'(2) after='f' => {value:'a\nf',cursor:2}
     expect(deleteToLineStart({ value: 'a\nbc def', cursor: 7 })).toEqual({
