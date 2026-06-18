@@ -65,7 +65,9 @@ export const installVoice = (): InstallResult => {
   if (!pre.python) return { ok: false, reason: 'missing-python' }
   if (!pre.uv) return { ok: false, reason: 'missing-uv' }
   execFileSync('git', ['clone', '--depth', '1', VOICE_REPO_URL, VOICE_DIR], { stdio: 'inherit' })
-  execFileSync('uv', ['sync'], { cwd: VOICE_DIR, stdio: 'inherit' })
+  // `--extra voice` pulls the real-audio stack (STT/TTS/wake/AEC/tray); plain `uv sync` installs only
+  // the light backbone, leaving the daemon unable to actually listen or speak.
+  execFileSync('uv', ['sync', '--extra', 'voice'], { cwd: VOICE_DIR, stdio: 'inherit' })
   return { ok: true }
 }
 
