@@ -174,6 +174,41 @@ describe('/stream WS bridge — chat', () => {
     expect(threads.map((t) => t.thread_id)).toEqual(['t1', 't2'])
   })
 
+  it('two chats racing during send → only the latest streams (no concurrent turns)', async () => {
+    let n = 0
+    // Both `chat` events enter the handler and await send before either resolves (the race window).
+    // The turn-token guard must drop the stale first turn so only the second streams.
+    const layer = Layer.succeed(
+      ChatService,
+      ChatService.of({
+        send: () =>
+          Effect.sync(() => {
+            n += 1
+            const id = n
+            return {
+              threadId: `t${id}`,
+              stream: Stream.fromIterable([
+                { type: 'content', content: `turn${id}` },
+                { type: 'finish', reason: 'stop' },
+              ] as StreamChunk[]),
+            }
+          }).pipe(Effect.delay('25 millis')),
+      }),
+    )
+    await mount(layer)
+    sock = await connect(serverUrl)
+    const threads: Array<{ thread_id: string }> = []
+    const contents: string[] = []
+    sock.on('thread', (t: { thread_id: string }) => threads.push(t))
+    sock.on('chunk', (c: StreamChunk) => c.type === 'content' && contents.push(c.content))
+    sock.emit('chat', { message: 'one' })
+    sock.emit('chat', { message: 'two' }) // races the first before its send resolves
+    await new Promise((r) => setTimeout(r, 120))
+    expect(threads).toHaveLength(1) // exactly one turn reached the socket
+    expect(threads[0].thread_id).toBe('t2') // the latest
+    expect(contents).toEqual(['turn2']) // no interleaving from the dropped first turn
+  })
+
   it('disconnecting mid-turn interrupts cleanly (no crash)', async () => {
     const stream = Stream.concat(
       Stream.make({ type: 'content', content: 'mid' } as StreamChunk),
@@ -222,5 +257,21 @@ describe('/stream WS bridge — confirm', () => {
 
     await waitUntil(async () => (await overlay()).commands.includes('git commit'))
     expect(addAllowedCommand).toHaveBeenCalledWith('git commit')
+  })
+
+  it('a confirm with no/invalid decision is ignored — the pending entry is NOT consumed', async () => {
+    runtime = ManagedRuntime.make(Layer.merge(PendingConfirmations.Live, PermissionOverlay.Live))
+    app = await buildServer(TEST_CONFIG, runtime as never)
+    await app.listen({ host: '127.0.0.1', port: 0 })
+    await createPending('c2', { scope: 'command', signature: 'git push' })
+    const { port } = app.server.address() as AddressInfo
+    sock = await connect(`http://127.0.0.1:${port}`)
+
+    sock.emit('confirm', { id: 'c2' }) // malformed — no decision
+    await new Promise((r) => setTimeout(r, 50))
+    // Still pending: a subsequent VALID confirm must still resolve + mutate the overlay.
+    sock.emit('confirm', { id: 'c2', decision: 'always' })
+    await waitUntil(async () => (await overlay()).commands.includes('git push'))
+    expect(addAllowedCommand).toHaveBeenCalledWith('git push')
   })
 })

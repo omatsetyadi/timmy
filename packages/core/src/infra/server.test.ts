@@ -114,6 +114,20 @@ describe('POST /confirm/:id', () => {
     expect(res.statusCode).toBe(404)
     expect(res.json()).toEqual({ resolved: false })
   })
+
+  it('rejects a missing/invalid decision with 400 WITHOUT consuming the pending entry', async () => {
+    await createPending('c9', { scope: 'command', signature: 'ls' })
+    const bad = await app.inject({ method: 'POST', url: '/confirm/c9', payload: {} })
+    expect(bad.statusCode).toBe(400)
+    // The pending entry must survive a malformed request — a valid decision still resolves it.
+    const ok = await app.inject({
+      method: 'POST',
+      url: '/confirm/c9',
+      payload: { decision: 'once' },
+    })
+    expect(ok.statusCode).toBe(200)
+    expect(ok.json()).toEqual({ resolved: true })
+  })
 })
 
 describe('GET/POST /permissions', () => {

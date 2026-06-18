@@ -21,6 +21,11 @@ const AUTH_TOKEN_KEY = 'server:auth_token'
 /** Routes reachable without a bearer token (liveness checks). */
 const PUBLIC_ROUTES = new Set(['/health'])
 
+/** The only valid confirm decisions. A malformed/absent decision must NOT silently consume (and thus
+ *  deny) the pending confirmation — callers reject instead. */
+const isDecision = (d: unknown): d is 'once' | 'always' | 'deny' =>
+  d === 'once' || d === 'always' || d === 'deny'
+
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost'])
 
 /** The services the routes resolve from the runtime. */
@@ -137,7 +142,12 @@ export async function buildServer(
   // onRequest hook since it is NOT in PUBLIC_ROUTES.
   app.post('/confirm/:id', async (req, reply) => {
     const { id } = req.params as { id: string }
-    const { decision } = (req.body ?? {}) as { decision?: 'once' | 'always' | 'deny' }
+    const { decision } = (req.body ?? {}) as { decision?: unknown }
+    // Validate first: without this, a missing decision falls through to "deny" and silently consumes
+    // the pending confirmation (the user can never approve that tool call).
+    if (!isDecision(decision)) {
+      return reply.code(400).send({ error: "decision must be 'once', 'always', or 'deny'" })
+    }
     const resolved = await applyConfirmDecision(runtime, id, decision)
     if (!resolved) return reply.code(404).send({ resolved: false })
     return reply.code(200).send({ resolved: true })
@@ -279,6 +289,10 @@ export async function buildServer(
   io.on('connection', (socket) => {
     app.log.info({ id: socket.id }, 'socket connected')
     let active: Fiber.RuntimeFiber<void, unknown> | null = null
+    // Monotonic turn token. Each `chat` claims the next value; after its `await c.send` it proceeds
+    // ONLY if still the latest — so a second `chat` arriving during that await (the barge-in race)
+    // supersedes the first instead of both streaming to the socket concurrently.
+    let turnGen = 0
     const interruptActive = () => {
       if (active) {
         runtime.runFork(Fiber.interrupt(active))
@@ -295,6 +309,7 @@ export async function buildServer(
           return
         }
         // One turn per socket: a new utterance (or barge-in) interrupts the in-flight turn first.
+        const myGen = ++turnGen
         interruptActive()
         // The voice daemon connects here and tags turns `channel: 'voice'` (defaults to text if absent).
         const sent = await runtime.runPromise(
@@ -309,6 +324,8 @@ export async function buildServer(
             Effect.either,
           ),
         )
+        // A newer `chat` arrived while we awaited send → that one owns the socket now; drop this one.
+        if (myGen !== turnGen) return
         if (Either.isLeft(sent)) {
           socket.emit('chunk', { type: 'error', message: sent.left.message })
           socket.emit('done', {})
@@ -331,9 +348,14 @@ export async function buildServer(
       },
     )
 
-    socket.on('confirm', (body: { id?: string; decision?: 'once' | 'always' | 'deny' }) => {
-      if (!body?.id) return
-      void applyConfirmDecision(runtime, body.id, body.decision)
+    socket.on('confirm', (body: { id?: string; decision?: unknown }) => {
+      // Ignore a malformed confirm (no id, or a bad/absent decision) — never silently consume +
+      // deny the pending request on garbage input.
+      if (!body?.id || !isDecision(body.decision)) return
+      // Catch so a failed resolve/persist surfaces in logs instead of an unhandled rejection.
+      void applyConfirmDecision(runtime, body.id, body.decision).catch((e) =>
+        app.log.error({ err: String(e) }, 'confirm failed'),
+      )
     })
 
     socket.on('interrupt', () => interruptActive())
