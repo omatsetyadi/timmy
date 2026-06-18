@@ -1,5 +1,9 @@
 name: build
 
+# SUPERSEDED for distribution by `release.yml` (Bun single-binary). This `@yao-pkg/pkg` +
+# dist/index.js path predates the Bun-compile decision (2026-06-18) and is no longer how Timmy ships;
+# kept only as a manual fallback. Prefer `release.yml`. Candidate for removal once Bun is the only path.
+#
 # Auto-builds are DISABLED to conserve free-tier Actions minutes.
 # (Private repo; macOS runners bill at 10x.) Run manually from the Actions tab
 # when you need binaries. To re-enable automatic builds, uncomment the push
