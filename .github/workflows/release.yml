@@ -17,15 +17,19 @@ jobs:
       contents: write # create the GitHub Release
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.3.9
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+
+      # Build the workspace dep first: the bundle imports `timmy-sdk`, which resolves to its built
+      # dist/ — absent after a plain install, so the bun compile can't resolve it without this.
+      - run: pnpm build
 
       # Compile the standalone binary (bun:sqlite, embedded keyring/onnx — no Node needed at runtime).
       - name: Build single binary (darwin-arm64)
@@ -41,7 +45,7 @@ jobs:
       # Publish only on a real version tag. A manual dispatch stops here (build validated, nothing shipped).
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: |
             timmy-darwin-arm64
