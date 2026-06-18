@@ -72,6 +72,9 @@ export interface VoiceConfig {
     openai?: { model?: string; voice?: string; instructions?: string }
   }
   wake: { word: string; phrase?: string }
+  /** Start the voice daemon when core starts (one login item — voice follows core). Read by CORE
+   *  (not the daemon): core spawns voice on its own startup when this is on + voice is installed. */
+  autostart: boolean
   /** AEC full-duplex loop (macOS); the daemon defaults this on. */
   full_duplex: boolean
   /** Endpointing + turn-taking knobs the daemon reads; tuned via `timmy voice set`. */
@@ -147,6 +150,7 @@ const DEFAULTS: TimmyConfig = {
     stt: {},
     tts: { engine: 'local' },
     wake: { word: 'hey_jarvis' },
+    autostart: false,
     full_duplex: true,
     conversation: {
       smart_turn: true,

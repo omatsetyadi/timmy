@@ -121,6 +121,7 @@ describe('voice config', () => {
       stt: {},
       tts: { engine: 'local' },
       wake: { word: 'hey_jarvis' },
+      autostart: false,
       full_duplex: true,
       conversation: {
         smart_turn: true,

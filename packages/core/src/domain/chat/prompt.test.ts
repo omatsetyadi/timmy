@@ -165,6 +165,11 @@ describe('voice register (channel-gated voice_style fragment)', () => {
   it('leaves text turns free of the spoken-register default', () => {
     expect(buildSystemPrompt(cfgVoice, [], false, '', 'text')).not.toContain('spoken aloud')
   })
+
+  it('tells the model voice input is transcribed (mis-hears, not typos) on voice turns only', () => {
+    expect(buildSystemPrompt(cfgVoice, [], false, '', 'voice')).toMatch(/transcrib/i)
+    expect(buildSystemPrompt(cfgVoice, [], false, '', 'text')).not.toMatch(/transcrib/i)
+  })
 })
 
 describe('recalled memory block', () => {

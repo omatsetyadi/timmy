@@ -9,8 +9,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && tsup",
-    "dev": "tsx watch src/index.ts start",
-    "start": "node dist/index.js start",
+    "dev": "tsx watch src/index.ts start --foreground",
+    "start": "node dist/index.js start --foreground",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"

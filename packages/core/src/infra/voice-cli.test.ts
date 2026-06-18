@@ -75,6 +75,11 @@ describe('applyVoiceTunable (full_duplex + conversation knobs)', () => {
     expect(() => applyVoiceTunable({}, 'full_duplex', 'maybe')).toThrow(/true.*false/i)
   })
 
+  it('sets voice.autostart (core-read) as a top-level boolean', () => {
+    expect((applyVoiceTunable({}, 'autostart', 'on').voice as Raw).autostart).toBe(true)
+    expect((applyVoiceTunable({}, 'autostart', 'off').voice as Raw).autostart).toBe(false)
+  })
+
   it('preserves unrelated config and sibling conversation keys', () => {
     const start: Raw = { voice: { conversation: { smart_turn: true }, tts: { engine: 'openai' } } }
     const out = applyVoiceTunable(start, 'follow_up_secs', '20')

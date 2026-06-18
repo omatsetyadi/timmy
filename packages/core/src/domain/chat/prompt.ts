@@ -72,6 +72,12 @@ export function buildSystemPrompt(
       `usually a sentence or two. No markdown, code blocks, bullet lists, headers, or emoji; write the ` +
       `way you'd say it. Give one clear answer; if there's more, say the key point and offer to continue. ` +
       `(Still give a full answer when the user explicitly asks for detail.)`
+    // Input is speech-to-text, not typed — so "errors" are usually the recognizer mishearing, not the user.
+    p +=
+      `\n\nThe user's message was transcribed from speech, so expect occasional misheard words, ` +
+      `homophones, or missing punctuation — read it for intended meaning, not literally. If a word seems ` +
+      `out of place or the message reads as garbled, treat it as a transcription slip: infer what they ` +
+      `most likely meant (or briefly confirm). Never point out "typos" — there is no keyboard.`
     // The user's own spoken-style preference layers on top of the default.
     const vs = a.voice_style?.trim()
     if (vs) p += `\n\n${vs}`

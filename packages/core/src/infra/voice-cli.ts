@@ -3,6 +3,15 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { extname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { CONFIG_DIR, CONFIG_PATH, readConfigSync, type VoiceConfig } from '../domain/config/config'
+import {
+  installVoice,
+  preflight,
+  startVoice,
+  stopVoice,
+  uninstallVoice,
+  voiceLifecycleStatus,
+  VOICE_PATHS,
+} from './voice-lifecycle'
 
 export type Raw = Record<string, unknown>
 
@@ -58,11 +67,12 @@ export function applyVoiceEdit(raw: Raw, path: string, value: string): Raw {
   return raw
 }
 
-// Endpointing / turn-taking knobs the daemon reads. `conv: true` → lives under voice.conversation;
-// otherwise directly under voice. `type` drives validation + coercion. Names ARE the contract — they
-// match the daemon's config.py keys; do not rename.
+// `voice.*` settings the system reads (the daemon's endpointing/turn-taking knobs, plus `autostart`
+// which CORE reads). `conv: true` → lives under voice.conversation; otherwise directly under voice.
+// `type` drives validation + coercion. Names ARE the contract; do not rename.
 type Coerce = 'bool' | 'float' | 'int'
 const VOICE_TUNABLES: Record<string, { conv: boolean; type: Coerce }> = {
+  autostart: { conv: false, type: 'bool' },
   full_duplex: { conv: false, type: 'bool' },
   smart_turn: { conv: true, type: 'bool' },
   smart_turn_threshold: { conv: true, type: 'float' },
@@ -163,7 +173,8 @@ export const voiceStatus = (): VoiceConfig => readConfigSync().voice
 
 // ── command ──────────────────────────────────────────────────────────────────
 
-const USAGE = 'Usage: timmy voice <engine|speaker|rate|wake import|openai|set|status>'
+const USAGE =
+  'Usage: timmy voice <install|start|stop|status|logs|uninstall|engine|speaker|rate|wake import|openai|set>'
 
 const applied = (msg: string): void => console.log(`${msg}   (restart Timmy to apply)`)
 const fail = (msg: string): never => {
@@ -204,8 +215,32 @@ async function wakeImport(): Promise<void> {
   }
 }
 
-/** `timmy voice <engine|speaker|rate|wake|openai|status>` — manage the `voice:` config block the
- *  voice daemon reads. Config-only, except `wake` which (re)imports the trained model file. */
+/** `timmy voice install` — preflight (no silent installs), then clone + uv sync after a y/N prompt. */
+async function voiceInstallFlow(): Promise<void> {
+  const pre = preflight()
+  const mark = (ok: boolean): string => (ok ? '✓' : '✗')
+  console.log('Timmy voice needs:')
+  console.log(`  ${mark(pre.python)} Python 3.11+`)
+  console.log(`  ${mark(pre.uv)} uv`)
+  console.log('  ✗ voice daemon  (clone + uv sync into ~/.timmy/voice)')
+  if (!pre.python)
+    return fail('Install Python 3.11+ first (e.g. `brew install python@3.12`), then re-run.')
+  if (!pre.uv)
+    return fail('Install uv first: `curl -LsSf https://astral.sh/uv/install.sh | sh`, then re-run.')
+  const rl = createInterface({ input: process.stdin, output: process.stdout })
+  const ans = await new Promise<string>((resolve) =>
+    rl.question('Install now? [y/N] ', (a) => resolve(a.trim().toLowerCase())),
+  )
+  rl.close()
+  if (ans !== 'y' && ans !== 'yes') return void console.log('Cancelled.')
+  const r = installVoice()
+  if (r.ok) return void console.log('Voice installed.  Start it with: timmy voice start')
+  if (r.reason === 'already-installed') return void console.log('Voice is already installed.')
+  return fail(`Install failed (${r.reason}).`)
+}
+
+/** `timmy voice <install|start|stop|status|logs|uninstall|engine|speaker|rate|wake|openai|set>` —
+ *  manage the voice daemon (lifecycle) + the `voice:` config block it reads. */
 export async function voice(args: readonly string[]): Promise<void> {
   const sub = args[0]
   try {
@@ -251,8 +286,40 @@ export async function voice(args: readonly string[]): Promise<void> {
         setVoiceTunable(key, value)
         return applied(`voice ${key} → ${value}`)
       }
-      case 'status':
-        return console.log(JSON.stringify(voiceStatus(), null, 2))
+      case 'install':
+        return voiceInstallFlow()
+      case 'autostart': {
+        const v = args[1]
+        if (v !== 'on' && v !== 'off') return fail('Usage: timmy voice autostart <on|off>')
+        setVoiceTunable('autostart', v)
+        return applied(`voice.autostart → ${v === 'on'} (core starts voice on launch)`)
+      }
+      case 'start': {
+        const r = startVoice()
+        if ('notInstalled' in r) return fail('Voice is not installed. Run: timmy voice install')
+        if ('alreadyRunning' in r)
+          return void console.log(`Voice already running (pid ${r.alreadyRunning}).`)
+        return void console.log(`Voice started (pid ${r.started}).  Logs: timmy voice logs`)
+      }
+      case 'stop': {
+        const r = stopVoice()
+        return void console.log(
+          'stopped' in r ? `Voice stopped (pid ${r.stopped}).` : 'Voice is not running.',
+        )
+      }
+      case 'logs':
+        if (!existsSync(VOICE_PATHS.logFile)) return void console.log('No voice logs yet.')
+        return void process.stdout.write(readFileSync(VOICE_PATHS.logFile, 'utf8'))
+      case 'uninstall':
+        uninstallVoice()
+        return void console.log('Voice stopped and removed (~/.timmy/voice).')
+      case 'status': {
+        const lc = voiceLifecycleStatus()
+        console.log(`installed: ${lc.installed}`)
+        console.log(lc.running ? `running:   yes (pid ${lc.running})` : 'running:   no')
+        console.log('config:')
+        return void console.log(JSON.stringify(voiceStatus(), null, 2))
+      }
       default:
         return fail(USAGE)
     }

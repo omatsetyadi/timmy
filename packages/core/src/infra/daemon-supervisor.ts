@@ -54,7 +54,7 @@ export const startBackground = (
   paths: DaemonPaths,
   command: string,
   args: readonly string[],
-  env: NodeJS.ProcessEnv = process.env,
+  opts: { cwd?: string; env?: NodeJS.ProcessEnv } = {},
 ): StartResult => {
   const running = isRunning(paths)
   if (running !== null) return { alreadyRunning: running }
@@ -64,7 +64,8 @@ export const startBackground = (
   const child: ChildProcess = spawn(command, [...args], {
     detached: true,
     stdio: ['ignore', log, log],
-    env,
+    cwd: opts.cwd,
+    env: opts.env ?? process.env,
   })
   const pid = child.pid
   if (pid === undefined) throw new Error('failed to spawn daemon (no pid)')

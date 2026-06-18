@@ -45,6 +45,7 @@ import { buildRuntime } from './runtime'
 import { buildServer } from './server'
 import { isRunning, startBackground, stop, type DaemonPaths } from './daemon-supervisor'
 import { AUTOSTART_LABEL, disableAutostart, enableAutostart, isAutostartEnabled } from './autostart'
+import { isVoiceInstalled, startVoice, stopVoice } from './voice-lifecycle'
 
 const VERSION = '0.1.0'
 
@@ -82,8 +83,17 @@ async function startForeground(): Promise<void> {
   await app.listen({ host: config.server.host, port: config.server.port })
   // Fastify's logger reports the listening address.
 
+  // One login item (core); voice follows it. If the user enabled voice.autostart and voice is
+  // installed, bring the voice daemon up as core's child. Best-effort — never block core on it.
+  if (config.voice.autostart && isVoiceInstalled()) {
+    const r = startVoice()
+    if ('started' in r) app.log.info({ pid: r.started }, 'voice started (autostart)')
+    else if ('alreadyRunning' in r) app.log.info({ pid: r.alreadyRunning }, 'voice already running')
+  }
+
   const shutdown = async (sig: string): Promise<void> => {
     app.log.info({ sig }, 'shutting down')
+    stopVoice() // bring voice down with core (no-op if it isn't running)
     await app.close()
     await runtime.dispose()
     process.exit(0)
