@@ -29,8 +29,9 @@ export function topK(
     .slice(0, k)
 }
 
-/** Float32Array ↔ Node Buffer for SQLite BLOB storage. */
+/** Float32Array ↔ SQLite BLOB bytes. Write as a Buffer (accepted by every driver for binding); read
+ *  back as a Uint8Array (what node:sqlite / bun:sqlite return for a BLOB — Buffer is a subclass). */
 export const floatsToBuffer = (v: Float32Array): Buffer =>
   Buffer.from(v.buffer, v.byteOffset, v.byteLength)
-export const bufferToFloats = (b: Buffer): Float32Array =>
+export const bufferToFloats = (b: Uint8Array): Float32Array =>
   new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength))

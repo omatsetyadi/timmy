@@ -16,7 +16,7 @@ interface EntityRow {
   kind: string
   name: string
   properties: string | null
-  embedding: Buffer | null
+  embedding: Uint8Array | null
   confidence: number
   source: string | null
   last_updated: string
