@@ -1,6 +1,5 @@
-import { execFileSync } from 'node:child_process'
-import { cpSync, existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { createHash } from 'node:crypto'
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -137,43 +136,61 @@ export function parseGithubSource(src: string): { user: string; repo: string; re
   return { user: m[1]!, repo: m[2]!, ref }
 }
 
-/** Install a plugin from any GitHub source (see {@link parseGithubSource}): shallow-clone the
- *  repo, `npm install` + `npm run build` (which resolves the published deps and produces the
- *  self-contained bundle), then copy the built plugin into `<pluginsDir>/<repo>/`. Always clones
- *  over https (re-derived from user/repo), so an `git@` source still resolves for a public repo.
- *  Uses `npm` (not pnpm) for the at-target build so it's independent of any pnpm
- *  workspace config / release-age cooldown. Returns the installed name (`repo`). */
-export function installFromGithub(source: string, pluginsDir: string): string {
+/** Release asset URLs for a plugin source: the prebuilt self-contained bundle (`index.js`) + its
+ *  `SHA256SUMS`. A `ref` targets that tag's release; otherwise `latest`. Pure (exported for tests). */
+export function pluginReleaseUrls(source: string): { repo: string; bundle: string; sums: string } {
   const { user, repo, ref } = parseGithubSource(source)
-  const url = `https://github.com/${user}/${repo}.git`
-  const tmp = mkdtempSync(join(tmpdir(), 'timmy-plugin-'))
-  try {
-    execFileSync('git', ['clone', '--depth', '1', ...(ref ? ['--branch', ref] : []), url, tmp], {
-      stdio: 'inherit',
-    })
-    execFileSync('npm', ['install', '--no-audit', '--no-fund', '--loglevel', 'error'], {
-      cwd: tmp,
-      stdio: 'inherit',
-    })
-    execFileSync('npm', ['run', 'build'], { cwd: tmp, stdio: 'inherit' })
-    if (!hasBuiltEntry(tmp)) {
-      throw new Error(
-        `'${source}' produced no dist/index.js — its build script must build the plugin`,
-      )
-    }
-    const dest = join(pluginsDir, repo)
-    rmSync(dest, { recursive: true, force: true })
-    cpSync(tmp, dest, {
-      recursive: true,
-      filter: (s) => {
-        const b = basename(s)
-        return b !== 'node_modules' && b !== '.git'
-      },
-    })
-    return repo
-  } finally {
-    rmSync(tmp, { recursive: true, force: true })
-  }
+  const base = ref
+    ? `https://github.com/${user}/${repo}/releases/download/${ref}`
+    : `https://github.com/${user}/${repo}/releases/latest/download`
+  return { repo, bundle: `${base}/index.js`, sums: `${base}/SHA256SUMS` }
+}
+
+/** Verify a downloaded bundle against a `SHA256SUMS` body (`<hash>  <name>` lines). Throws on a
+ *  missing entry or a mismatch. Pure (exported for tests). */
+export function verifyChecksum(data: Buffer, sumsText: string, asset: string): void {
+  const expected = sumsText
+    .split('\n')
+    .map((l) => l.trim().split(/\s+/))
+    .find(([, name]) => name === asset || name === `*${asset}`)?.[0]
+  if (!expected) throw new Error(`no checksum for ${asset} in SHA256SUMS`)
+  const actual = createHash('sha256').update(data).digest('hex')
+  if (expected !== actual) throw new Error(`checksum mismatch for ${asset}`)
+}
+
+const fetchBytes = async (url: string): Promise<Buffer> => {
+  const r = await fetch(url)
+  if (!r.ok) throw new Error(`download failed (${r.status}): ${url}`)
+  return Buffer.from(await r.arrayBuffer())
+}
+const fetchText = async (url: string): Promise<string> => {
+  const r = await fetch(url)
+  if (!r.ok) throw new Error(`fetch failed (${r.status}): ${url}`)
+  return r.text()
+}
+
+/**
+ * Install a plugin from its GitHub **Release** — fetch the prebuilt, self-contained `index.js`
+ * bundle + `SHA256SUMS`, verify the checksum, then drop it into `<pluginsDir>/<repo>/index.js`.
+ * **No clone, no npm, no build** — works on a machine without Node/git/a toolchain (the whole point:
+ * plugins build at *publish*, never at install). Dev inner-loop still uses `installLocal('./dist')`.
+ * `baseUrlOverride` points at an alternate source (tests/dev). Returns the installed name (`repo`).
+ */
+export async function installFromGithub(
+  source: string,
+  pluginsDir: string,
+  baseUrlOverride?: string,
+): Promise<string> {
+  const { repo, bundle, sums } = pluginReleaseUrls(source)
+  const bundleUrl = baseUrlOverride ? `${baseUrlOverride}/index.js` : bundle
+  const sumsUrl = baseUrlOverride ? `${baseUrlOverride}/SHA256SUMS` : sums
+  const data = await fetchBytes(bundleUrl)
+  verifyChecksum(data, await fetchText(sumsUrl), 'index.js')
+  const dest = join(pluginsDir, repo)
+  rmSync(dest, { recursive: true, force: true })
+  mkdirSync(dest, { recursive: true })
+  writeFileSync(join(dest, 'index.js'), data)
+  return repo
 }
 
 /** A first-party plugin `timmy init` offers to install out-of-the-box. `source` is the

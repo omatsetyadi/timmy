@@ -1,17 +1,23 @@
-import { describe, it, expect } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { afterEach, describe, it, expect } from 'vitest'
+import { createServer, type Server } from 'node:http'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
 import {
   DEFAULT_PLUGINS,
   hasBuiltEntry,
   installDefaults,
+  installFromGithub,
   installLocal,
   isGithubSource,
   listInstalled,
   parseGithubSource,
+  pluginReleaseUrls,
   readInstalledManifest,
   remove,
+  verifyChecksum,
   type DefaultPlugin,
 } from './plugin-cli'
 
@@ -276,5 +282,82 @@ describe('isGithubSource', () => {
     expect(isGithubSource('./local/plugin')).toBe(false)
     expect(isGithubSource('/abs/path')).toBe(false)
     expect(isGithubSource('https://gitlab.com/u/r')).toBe(false)
+  })
+})
+
+describe('pluginReleaseUrls', () => {
+  it('points at the latest release assets (index.js + SHA256SUMS) by default', () => {
+    const u = pluginReleaseUrls('github:omatsetyadi/timmy-plugin-web')
+    expect(u.repo).toBe('timmy-plugin-web')
+    expect(u.bundle).toBe(
+      'https://github.com/omatsetyadi/timmy-plugin-web/releases/latest/download/index.js',
+    )
+    expect(u.sums).toMatch(/\/releases\/latest\/download\/SHA256SUMS$/)
+  })
+
+  it('targets a specific tag when the source carries a ref', () => {
+    const u = pluginReleaseUrls('github:omatsetyadi/timmy-plugin-web#v1.2.0')
+    expect(u.bundle).toBe(
+      'https://github.com/omatsetyadi/timmy-plugin-web/releases/download/v1.2.0/index.js',
+    )
+  })
+})
+
+describe('verifyChecksum', () => {
+  const data = Buffer.from('plugin-bundle-bytes')
+  const hash = createHash('sha256').update(data).digest('hex')
+
+  it('passes when the hash matches the SHA256SUMS entry', () => {
+    expect(() => verifyChecksum(data, `${hash}  index.js\n`, 'index.js')).not.toThrow()
+  })
+  it('throws on a mismatch', () => {
+    expect(() => verifyChecksum(data, `deadbeef  index.js\n`, 'index.js')).toThrow(/mismatch/i)
+  })
+  it('throws when the asset is absent from SHA256SUMS', () => {
+    expect(() => verifyChecksum(data, `${hash}  other.js\n`, 'index.js')).toThrow(/no checksum/i)
+  })
+})
+
+describe('installFromGithub (fetch prebuilt release bundle)', () => {
+  let server: Server | undefined
+  afterEach(() => server?.close())
+
+  // Serve a fake release (index.js + SHA256SUMS) over a throwaway local HTTP server.
+  const serve = (bundle: Buffer, sums: string): Promise<string> =>
+    new Promise((resolve) => {
+      server = createServer((req, res) => {
+        if (req.url === '/index.js') return void res.end(bundle)
+        if (req.url === '/SHA256SUMS') return void res.end(sums)
+        res.statusCode = 404
+        res.end('nope')
+      })
+      server.listen(0, '127.0.0.1', () => {
+        const { port } = server!.address() as AddressInfo
+        resolve(`http://127.0.0.1:${port}`)
+      })
+    })
+
+  it('downloads the verified bundle into <pluginsDir>/<repo>/index.js', async () => {
+    const bundle = Buffer.from('module.exports.default = { name: "web", tools: [] }')
+    const sums = `${createHash('sha256').update(bundle).digest('hex')}  index.js\n`
+    const base = await serve(bundle, sums)
+    const dest = emptyPluginsDir()
+
+    const name = await installFromGithub('github:omatsetyadi/timmy-plugin-web', dest, base)
+    expect(name).toBe('timmy-plugin-web')
+    expect(readFileSync(join(dest, 'timmy-plugin-web', 'index.js'), 'utf8')).toContain(
+      'name: "web"',
+    )
+  })
+
+  it('refuses (and writes nothing) when the checksum does not match', async () => {
+    const bundle = Buffer.from('tampered')
+    const base = await serve(bundle, 'deadbeef  index.js\n')
+    const dest = emptyPluginsDir()
+
+    await expect(installFromGithub('github:me/timmy-plugin-x', dest, base)).rejects.toThrow(
+      /mismatch/i,
+    )
+    expect(existsSync(join(dest, 'timmy-plugin-x'))).toBe(false)
   })
 })

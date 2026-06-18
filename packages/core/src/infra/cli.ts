@@ -219,10 +219,9 @@ async function plugin(args: readonly string[]): Promise<void> {
     }
     mkdirSync(pluginsDir, { recursive: true })
     // Any GitHub source (github:user/repo shorthand, https://github.com/... URL, or
-    // git@github.com: SSH) → clone + `npm install` + build at the target (resolving the
-    // published deps), then install the built bundle.
+    // git@github.com: SSH) → fetch the prebuilt release bundle (no clone/npm/build — Node-less).
     if (isGithubSource(src)) {
-      const name = installFromGithub(src, pluginsDir)
+      const name = await installFromGithub(src, pluginsDir)
       console.log(`installed '${name}' from ${src} → ${join(pluginsDir, name)}`)
       await reportInstalled(pluginsDir, name)
       return
@@ -588,7 +587,7 @@ async function init(): Promise<void> {
       const results = await installDefaults(
         DEFAULT_PLUGINS,
         async (p) => {
-          const dir = installFromGithub(p.source, pluginsDir)
+          const dir = await installFromGithub(p.source, pluginsDir)
           await reportInstalled(pluginsDir, dir)
         },
         (m) => console.log(m),
