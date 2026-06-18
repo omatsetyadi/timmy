@@ -1,0 +1,24 @@
+name: ci
+
+# Typecheck + test + lint on every push and PR. Runs on the public repo (free Actions minutes).
+# The DB layer is node:sqlite (built-in) and the suite is self-contained, so a plain Linux runner
+# with Node 24 is enough — no native DB, no model downloads.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm lint

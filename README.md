@@ -4,6 +4,25 @@ Modular, local-first personal AI assistant platform. A local LLM handles most co
 
 > Deep design lives in the workspace `docs/` folder: `SYSTEM_DESIGN.md`, `TECH_STACK.md`, `DEVELOPMENT_PLAN.md`, `OLLAMA_GUIDE.md`.
 
+## Install (macOS · Apple Silicon · beta)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/omatsetyadi/timmy/main/install.sh | sh
+```
+
+Downloads the single `timmy` binary to `~/.local/bin` (checksum-verified) — **no Node, no toolchain**. Then:
+
+```sh
+timmy init       # one-time setup: pick a provider/model, install default plugins
+timmy start      # start the background daemon (HTTP/WS on 127.0.0.1:3737)
+timmy chat       # talk to it in your terminal
+```
+
+Daemon lifecycle: `timmy start | stop | status | logs [-f]`, and `timmy autostart on` to launch at login.
+Voice (optional, hands-free): `timmy voice install`, then `timmy voice start` (or `timmy voice autostart on` so it follows core).
+
+> Beta is unsigned — on first run macOS may quarantine it; clear with `xattr -dr com.apple.quarantine ~/.local/bin/timmy`. Linux/Windows builds + code signing come later.
+
 ## Architecture
 
 **Timmy is the "frontdesk"** — one top-level agent (think JARVIS) that you configure with a provider + model (Ollama, OpenAI, Anthropic, Gemini, DeepSeek, or Claude Code). It chats locally for free and reaches for more power only when needed:
@@ -30,7 +49,7 @@ Modular, local-first personal AI assistant platform. A local LLM handles most co
 
 Timmy is built to be extended by writing a plugin — a small package that exports tools against a stable, versioned contract. **Start here: [`packages/sdk/README.md`](packages/sdk/README.md)** — the full plugin-author guide (contract, `apiVersion`, naming rules, risk tiers, credentials, `ToolContext`).
 
-Reusable capability libraries (OS/machine control, etc.) live in the separate [`agent-tool-calls`](https://github.com/omatsetyadi/agent-tool-calls) repo; Timmy plugins are thin adapters over them. Install a plugin with `timmy plugin install ./path` or `timmy plugin install github:user/repo`.
+Reusable capability libraries (OS/machine control, etc.) live in the separate [`agent-tool-calls`](https://github.com/omatsetyadi/agent-tool-calls) repo; Timmy plugins are thin adapters over them. Install a plugin with `timmy plugin install github:user/repo` — it **fetches the prebuilt, checksum-verified bundle from the plugin's GitHub Release** (no clone/build on your machine). `timmy plugin install ./dist` installs a local build for plugin development.
 
 ## Monorepo layout
 
@@ -40,7 +59,7 @@ packages/
   core/    timmy-core — the daemon (HTTP/WS server, LLM providers, tool registry, persistence) + CLI
 ```
 
-Planned optional layers (not yet in the tree): `timmy-voice` (Python, core-bundled — STT/TTS/wake-word), `timmy-dashboard` (Electron), and the workflow platform. See `docs/DEVELOPMENT_PLAN.md` for the roadmap.
+Voice ships as a separate Python daemon ([`timmy-voice`](https://github.com/omatsetyadi/timmy-voice) — STT/TTS/wake-word) that `timmy voice install` sets up and core supervises; it talks to core over the same `/stream` contract. Still planned: `timmy-dashboard` (Electron) + the workflow platform. See `docs/DEVELOPMENT_PLAN.md` for the roadmap.
 
 ## Develop
 
