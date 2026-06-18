@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, rmSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CONFIG_DIR } from '../domain/config/config'
 import {
@@ -64,7 +65,17 @@ export const installVoice = (): InstallResult => {
   const pre = preflight()
   if (!pre.python) return { ok: false, reason: 'missing-python' }
   if (!pre.uv) return { ok: false, reason: 'missing-uv' }
-  execFileSync('git', ['clone', '--depth', '1', VOICE_REPO_URL, VOICE_DIR], { stdio: 'inherit' })
+  // Clone to a temp dir then MERGE into VOICE_DIR — `git clone` refuses a non-empty target, and
+  // VOICE_DIR may already hold pre-install artifacts (an imported wake model under `wakewords/`, the
+  // `aec_helper`). Merging keeps those; cpSync overwrites only same-named files (none, in practice).
+  const tmp = mkdtempSync(join(tmpdir(), 'timmy-voice-'))
+  try {
+    execFileSync('git', ['clone', '--depth', '1', VOICE_REPO_URL, tmp], { stdio: 'inherit' })
+    mkdirSync(VOICE_DIR, { recursive: true })
+    cpSync(tmp, VOICE_DIR, { recursive: true })
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
   // `--extra voice` pulls the real-audio stack (STT/TTS/wake/AEC/tray); plain `uv sync` installs only
   // the light backbone, leaving the daemon unable to actually listen or speak.
   execFileSync('uv', ['sync', '--extra', 'voice'], { cwd: VOICE_DIR, stdio: 'inherit' })
