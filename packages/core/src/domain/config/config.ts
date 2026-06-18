@@ -72,6 +72,17 @@ export interface VoiceConfig {
     openai?: { model?: string; voice?: string; instructions?: string }
   }
   wake: { word: string; phrase?: string }
+  /** AEC full-duplex loop (macOS); the daemon defaults this on. */
+  full_duplex: boolean
+  /** Endpointing + turn-taking knobs the daemon reads; tuned via `timmy voice set`. */
+  conversation: {
+    smart_turn: boolean
+    smart_turn_threshold: number
+    smart_turn_hard_cap_ms: number
+    end_silence_ms: number
+    follow_up_secs: number
+    first_listen_secs: number
+  }
 }
 
 export interface TimmyConfig {
@@ -136,6 +147,15 @@ const DEFAULTS: TimmyConfig = {
     stt: {},
     tts: { engine: 'local' },
     wake: { word: 'hey_jarvis' },
+    full_duplex: true,
+    conversation: {
+      smart_turn: true,
+      smart_turn_threshold: 0.5,
+      smart_turn_hard_cap_ms: 2500,
+      end_silence_ms: 900,
+      follow_up_secs: 12,
+      first_listen_secs: 8,
+    },
   },
   memory: {
     learning_mode: true,
@@ -191,6 +211,7 @@ function loadConfig(path: string): TimmyConfig {
           : {}),
       },
       wake: { ...DEFAULTS.voice.wake, ...f.voice?.wake },
+      conversation: { ...DEFAULTS.voice.conversation, ...f.voice?.conversation },
     },
     memory: { ...DEFAULTS.memory, ...f.memory },
   }

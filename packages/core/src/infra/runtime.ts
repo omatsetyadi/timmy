@@ -8,6 +8,7 @@ import {
   type TimmyConfig,
 } from '../domain/config/config'
 import { CredentialStore } from '../domain/credentials/credential-store'
+import { Notifier } from '../domain/notify/notifier'
 import { Db } from '../domain/persistence/db'
 import { ThreadStore } from '../domain/persistence/thread-store'
 import { LlmClient } from '../domain/llm/llm-client'
@@ -98,6 +99,7 @@ export function buildRuntime() {
     CredentialStore.Live,
     PendingConfirmations.Live,
     PermissionOverlay.Live,
+    Notifier.Live,
   )
 
   // ProviderRegistry needs Config + CredentialStore; FrontdeskLlm too.

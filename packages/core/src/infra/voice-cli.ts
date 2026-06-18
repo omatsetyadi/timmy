@@ -58,6 +58,63 @@ export function applyVoiceEdit(raw: Raw, path: string, value: string): Raw {
   return raw
 }
 
+// Endpointing / turn-taking knobs the daemon reads. `conv: true` → lives under voice.conversation;
+// otherwise directly under voice. `type` drives validation + coercion. Names ARE the contract — they
+// match the daemon's config.py keys; do not rename.
+type Coerce = 'bool' | 'float' | 'int'
+const VOICE_TUNABLES: Record<string, { conv: boolean; type: Coerce }> = {
+  full_duplex: { conv: false, type: 'bool' },
+  smart_turn: { conv: true, type: 'bool' },
+  smart_turn_threshold: { conv: true, type: 'float' },
+  smart_turn_hard_cap_ms: { conv: true, type: 'int' },
+  end_silence_ms: { conv: true, type: 'int' },
+  follow_up_secs: { conv: true, type: 'float' },
+  first_listen_secs: { conv: true, type: 'float' },
+}
+
+export const VOICE_TUNABLE_KEYS = Object.keys(VOICE_TUNABLES)
+
+const coerce = (type: Coerce, value: string): boolean | number => {
+  switch (type) {
+    case 'bool': {
+      const v = value.toLowerCase()
+      if (v === 'true' || v === 'on') return true
+      if (v === 'false' || v === 'off') return false
+      throw new Error(`expected true/false, got '${value}'`)
+    }
+    case 'float': {
+      const n = parseFloat(value)
+      if (Number.isNaN(n)) throw new Error(`expected a number, got '${value}'`)
+      return n
+    }
+    case 'int': {
+      const n = parseInt(value, 10)
+      if (Number.isNaN(n)) throw new Error(`expected an integer, got '${value}'`)
+      return n
+    }
+  }
+}
+
+/**
+ * Return `raw` with a voice tuning knob (`full_duplex` or a `conversation.*` key) set to the coerced
+ * `value`, creating nested objects as needed and leaving every other key intact. Throws on an unknown
+ * key or a value that doesn't match the knob's type.
+ */
+export function applyVoiceTunable(raw: Raw, key: string, value: string): Raw {
+  const spec = VOICE_TUNABLES[key]
+  if (!spec)
+    throw new Error(`unknown voice setting '${key}' (try: ${VOICE_TUNABLE_KEYS.join(', ')})`)
+  const voice = (raw.voice ??= {}) as Raw
+  const coerced = coerce(spec.type, value)
+  if (spec.conv) {
+    const conversation = (voice.conversation ??= {}) as Raw
+    conversation[key] = coerced
+  } else {
+    voice[key] = coerced
+  }
+  return raw
+}
+
 /**
  * Validate + copy a trained `.onnx` into the single canonical wake slot, replacing any existing
  * model. Throws on a non-`.onnx` or missing source. Returns the destination. (The daemon loads
@@ -98,13 +155,15 @@ export const setVoiceRate = (rate: string): void => write('rate', rate)
 export const setVoiceOpenai = (field: string, value: string): void =>
   write(`openai.${field}`, value)
 export const setVoiceWakePhrase = (phrase: string): void => write('wake.phrase', phrase)
+export const setVoiceTunable = (key: string, value: string): void =>
+  saveRaw(applyVoiceTunable(loadRaw(), key, value))
 
 /** The effective `voice` block (defaults merged with the file) — for `timmy voice status`. */
 export const voiceStatus = (): VoiceConfig => readConfigSync().voice
 
 // ── command ──────────────────────────────────────────────────────────────────
 
-const USAGE = 'Usage: timmy voice <engine|speaker|rate|wake import|openai|status>'
+const USAGE = 'Usage: timmy voice <engine|speaker|rate|wake import|openai|set|status>'
 
 const applied = (msg: string): void => console.log(`${msg}   (restart Timmy to apply)`)
 const fail = (msg: string): never => {
@@ -180,6 +239,17 @@ export async function voice(args: readonly string[]): Promise<void> {
           return fail('Usage: timmy voice openai <voice|model|instructions> <value>')
         setVoiceOpenai(field, value)
         return applied(`voice.tts.openai.${field} → ${value}`)
+      }
+      case 'set': {
+        // Turn-taking / endpointing knobs (full_duplex + conversation.*) the daemon reads.
+        const key = args[1]
+        const value = args.slice(2).join(' ')
+        if (!key || value === '')
+          return fail(
+            `Usage: timmy voice set <key> <value>\n  keys: ${VOICE_TUNABLE_KEYS.join(', ')}`,
+          )
+        setVoiceTunable(key, value)
+        return applied(`voice ${key} → ${value}`)
       }
       case 'status':
         return console.log(JSON.stringify(voiceStatus(), null, 2))

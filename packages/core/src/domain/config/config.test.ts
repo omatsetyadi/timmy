@@ -121,7 +121,31 @@ describe('voice config', () => {
       stt: {},
       tts: { engine: 'local' },
       wake: { word: 'hey_jarvis' },
+      full_duplex: true,
+      conversation: {
+        smart_turn: true,
+        smart_turn_threshold: 0.5,
+        smart_turn_hard_cap_ms: 2500,
+        end_silence_ms: 900,
+        follow_up_secs: 12,
+        first_listen_secs: 8,
+      },
     })
+  })
+
+  it('parses full_duplex + conversation knobs and deep-merges partial conversation over defaults', () => {
+    const path = writeCfg(`
+voice:
+  full_duplex: false
+  conversation: { smart_turn_threshold: 0.7, follow_up_secs: 20 }
+`)
+    const v = readConfigSync(path).voice
+    expect(v.full_duplex).toBe(false)
+    expect(v.conversation.smart_turn_threshold).toBe(0.7) // set
+    expect(v.conversation.follow_up_secs).toBe(20) // set
+    expect(v.conversation.smart_turn).toBe(true) // default preserved
+    expect(v.conversation.smart_turn_hard_cap_ms).toBe(2500) // default preserved
+    expect(v.conversation.first_listen_secs).toBe(8) // default preserved
   })
 
   it('parses a full voice block (stt, tts + openai, wake)', () => {

@@ -9,6 +9,7 @@ import { ProviderRegistry } from '../domain/llm/provider-registry'
 import type { StreamChunk } from '../domain/llm/stream-chunk'
 import { ThreadStore } from '../domain/persistence/thread-store'
 import { EntityStore } from '../domain/memory/entity-store'
+import { Notifier } from '../domain/notify/notifier'
 import { PendingConfirmations } from '../domain/tools/confirmations'
 import { mergeOverlay, PermissionOverlay } from '../domain/tools/permission-overlay'
 import { statusReport } from './model-cli'
@@ -33,6 +34,7 @@ type AppServices =
   | Config
   | ProviderRegistry
   | EntityStore
+  | Notifier
 
 /**
  * Build the timmy-core HTTP + WebSocket server. Caller calls `.listen()`.
@@ -259,6 +261,21 @@ export async function buildServer(
     if (authorize(token)) return next()
     next(new Error('unauthorized'))
   })
+
+  // Proactive push: register the transport sink so producers (e.g. a finished long-running task)
+  // can `Notifier.notify(...)` → broadcast a `notify` event to connected /stream clients (the voice
+  // daemon speaks it). `serviceOption` so a runtime without Notifier (some tests) skips gracefully.
+  await runtime.runPromise(
+    Effect.serviceOption(Notifier).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.void,
+          onSome: (n) => n.setSink((payload) => io.emit('notify', payload)),
+        }),
+      ),
+    ),
+  )
+
   io.on('connection', (socket) => {
     app.log.info({ id: socket.id }, 'socket connected')
     let active: Fiber.RuntimeFiber<void, unknown> | null = null

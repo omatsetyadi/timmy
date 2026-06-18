@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { applyVoiceEdit, importWake, type Raw } from './voice-cli'
+import { applyVoiceEdit, applyVoiceTunable, importWake, type Raw } from './voice-cli'
 
 const tts = (raw: Raw) => (raw.voice as Raw).tts as Raw
+const conv = (raw: Raw) => (raw.voice as Raw).conversation as Raw
 
 describe('applyVoiceEdit (pure voice config mutation)', () => {
   it('sets engine at voice.tts.engine, rejecting anything but local/openai', () => {
@@ -45,6 +46,41 @@ describe('applyVoiceEdit (pure voice config mutation)', () => {
     expect(out.memory).toEqual({ learning_mode: true })
     expect(tts(out).engine).toBe('openai') // sibling within voice.tts preserved
     expect(tts(out).voice).toBe('bm_fable')
+  })
+})
+
+describe('applyVoiceTunable (full_duplex + conversation knobs)', () => {
+  it('sets full_duplex as a boolean at voice.full_duplex (true/false/on/off)', () => {
+    expect((applyVoiceTunable({}, 'full_duplex', 'false').voice as Raw).full_duplex).toBe(false)
+    expect((applyVoiceTunable({}, 'full_duplex', 'on').voice as Raw).full_duplex).toBe(true)
+  })
+
+  it('sets a float knob under voice.conversation', () => {
+    expect(conv(applyVoiceTunable({}, 'smart_turn_threshold', '0.7')).smart_turn_threshold).toBe(
+      0.7,
+    )
+  })
+
+  it('sets an int knob under voice.conversation', () => {
+    expect(conv(applyVoiceTunable({}, 'end_silence_ms', '800')).end_silence_ms).toBe(800)
+  })
+
+  it('sets the boolean smart_turn under voice.conversation', () => {
+    expect(conv(applyVoiceTunable({}, 'smart_turn', 'off')).smart_turn).toBe(false)
+  })
+
+  it('rejects an unknown key, a non-numeric number, and a non-boolean', () => {
+    expect(() => applyVoiceTunable({}, 'bogus', '1')).toThrow(/unknown/i)
+    expect(() => applyVoiceTunable({}, 'end_silence_ms', 'lots')).toThrow(/integer/i)
+    expect(() => applyVoiceTunable({}, 'full_duplex', 'maybe')).toThrow(/true.*false/i)
+  })
+
+  it('preserves unrelated config and sibling conversation keys', () => {
+    const start: Raw = { voice: { conversation: { smart_turn: true }, tts: { engine: 'openai' } } }
+    const out = applyVoiceTunable(start, 'follow_up_secs', '20')
+    expect(conv(out).follow_up_secs).toBe(20)
+    expect(conv(out).smart_turn).toBe(true) // sibling preserved
+    expect(tts(out).engine).toBe('openai') // sibling voice block preserved
   })
 })
 
