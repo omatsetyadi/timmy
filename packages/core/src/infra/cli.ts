@@ -44,6 +44,7 @@ import { voice } from './voice-cli'
 import { buildRuntime } from './runtime'
 import { buildServer } from './server'
 import { isRunning, startBackground, stop, type DaemonPaths } from './daemon-supervisor'
+import { AUTOSTART_LABEL, disableAutostart, enableAutostart, isAutostartEnabled } from './autostart'
 
 const VERSION = '0.1.0'
 
@@ -95,6 +96,36 @@ async function startForeground(): Promise<void> {
 function stopDaemon(): void {
   const r = stop(CORE_PATHS)
   console.log('stopped' in r ? `Timmy stopped (pid ${r.stopped}).` : 'Timmy is not running.')
+}
+
+/** `timmy autostart on|off|status` — manage the launch-on-login agent (macOS LaunchAgent). */
+function autostart(args: readonly string[]): void {
+  const sub = args[0]
+  if (sub !== 'on' && sub !== 'off' && sub !== 'status') {
+    console.error('Usage: timmy autostart <on|off|status>')
+    process.exit(1)
+  }
+  if (sub === 'status') {
+    console.log(isAutostartEnabled() ? 'Autostart: on (runs at login)' : 'Autostart: off')
+    return
+  }
+  if (process.platform !== 'darwin') {
+    console.error('autostart is macOS-only for now (Linux systemd support is planned).')
+    process.exit(1)
+  }
+  if (sub === 'off') {
+    disableAutostart()
+    console.log('Autostart disabled — Timmy will no longer start at login.')
+    return
+  }
+  // launchd supervises the long-running process, so register the FOREGROUND server.
+  const { cmd, args: relaunchArgs } = relaunch(['start', '--foreground'])
+  enableAutostart({
+    label: AUTOSTART_LABEL,
+    programArgs: [cmd, ...relaunchArgs],
+    logFile: CORE_PATHS.logFile,
+  })
+  console.log('Autostart enabled — Timmy will start at login.')
 }
 
 /** `timmy logs [-f]` — print the daemon log; `-f` follows it (via `tail -f`). */
@@ -581,6 +612,7 @@ Core:
   start [--foreground|-f]            Start the daemon in the background (-f runs it inline, for dev)
   stop                               Stop the background daemon
   logs [-f]                          Print the daemon log (-f to follow)
+  autostart <on|off|status>          Start Timmy at login (macOS LaunchAgent)
   chat [--thread <id>]               Interactive terminal chat with the running daemon
   status                             Check whether the running daemon is reachable
   help, --help, -h                   Show this help
@@ -652,6 +684,7 @@ export function run(): void {
   if (cmd === 'start') void start(process.argv.slice(3))
   else if (cmd === 'stop') stopDaemon()
   else if (cmd === 'logs') logs(process.argv.slice(3))
+  else if (cmd === 'autostart') autostart(process.argv.slice(3))
   else if (cmd === 'init') void init()
   else if (cmd === 'chat') void chat(process.argv.slice(3))
   else if (cmd === 'status') void status()
