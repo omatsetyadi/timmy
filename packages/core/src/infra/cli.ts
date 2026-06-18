@@ -1,5 +1,6 @@
 import { Effect } from 'effect'
-import { mkdirSync, existsSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { mkdirSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 import {
@@ -42,10 +43,39 @@ import { profile } from './profile-cli'
 import { voice } from './voice-cli'
 import { buildRuntime } from './runtime'
 import { buildServer } from './server'
+import { isRunning, startBackground, stop, type DaemonPaths } from './daemon-supervisor'
 
 const VERSION = '0.1.0'
 
-async function start(): Promise<void> {
+/** Core daemon pidfile + logfile (background-managed instances). */
+const CORE_PATHS: DaemonPaths = {
+  pidFile: join(CONFIG_DIR, 'timmy.pid'),
+  logFile: join(CONFIG_DIR, 'timmy.log'),
+}
+
+/** Command to re-launch THIS program with extra args. Handles both `node dist/index.js …`
+ *  (dev: argv[1] is the script) and a compiled single binary (argv[1] is the subcommand). */
+function relaunch(extra: string[]): { cmd: string; args: string[] } {
+  const selfIsScript = /\.(c?js|mjs|ts)$/.test(process.argv[1] ?? '')
+  return selfIsScript
+    ? { cmd: process.execPath, args: [process.argv[1], ...extra] }
+    : { cmd: process.execPath, args: extra }
+}
+
+/** `timmy start` — background by default (pidfile + logfile); `--foreground`/`-f` runs inline (dev). */
+async function start(args: readonly string[]): Promise<void> {
+  if (args.includes('--foreground') || args.includes('-f')) return startForeground()
+  const { cmd, args: relaunchArgs } = relaunch(['start', '--foreground'])
+  const r = startBackground(CORE_PATHS, cmd, relaunchArgs)
+  if ('alreadyRunning' in r) {
+    console.log(`Timmy is already running (pid ${r.alreadyRunning}).`)
+    return
+  }
+  console.log(`Timmy started in the background (pid ${r.started}).  Follow logs: timmy logs -f`)
+}
+
+/** Run the server in the foreground (the actual daemon body; what the detached child executes). */
+async function startForeground(): Promise<void> {
   const { runtime, config } = buildRuntime()
   const app = await buildServer(config, runtime)
   await app.listen({ host: config.server.host, port: config.server.port })
@@ -61,10 +91,31 @@ async function start(): Promise<void> {
   process.once('SIGTERM', () => void shutdown('SIGTERM'))
 }
 
+/** `timmy stop` — signal the background daemon and clean up its pidfile. */
+function stopDaemon(): void {
+  const r = stop(CORE_PATHS)
+  console.log('stopped' in r ? `Timmy stopped (pid ${r.stopped}).` : 'Timmy is not running.')
+}
+
+/** `timmy logs [-f]` — print the daemon log; `-f` follows it (via `tail -f`). */
+function logs(args: readonly string[]): void {
+  if (!existsSync(CORE_PATHS.logFile)) {
+    console.log('No logs yet — start Timmy first (timmy start).')
+    return
+  }
+  if (args.includes('-f') || args.includes('--follow')) {
+    spawn('tail', ['-f', CORE_PATHS.logFile], { stdio: 'inherit' })
+  } else {
+    process.stdout.write(readFileSync(CORE_PATHS.logFile, 'utf8'))
+  }
+}
+
 async function status(): Promise<void> {
   // Read config only — a health ping must not build the full runtime (which would
   // open the DB and load plugins from disk just to learn the host/port).
   const config = readConfigSync()
+  const pid = isRunning(CORE_PATHS)
+  console.log(pid ? `Daemon process: running (pid ${pid})` : 'Daemon process: not running')
   const host = config.server.host === '0.0.0.0' ? '127.0.0.1' : config.server.host
   const url = `http://${host}:${config.server.port}/health`
   try {
@@ -527,7 +578,9 @@ Usage: timmy <command> [args]
 
 Core:
   init                               First-run setup wizard — detect env + write ~/.timmy/config.yaml
-  start                              Start the Timmy daemon (HTTP + WebSocket server)
+  start [--foreground|-f]            Start the daemon in the background (-f runs it inline, for dev)
+  stop                               Stop the background daemon
+  logs [-f]                          Print the daemon log (-f to follow)
   chat [--thread <id>]               Interactive terminal chat with the running daemon
   status                             Check whether the running daemon is reachable
   help, --help, -h                   Show this help
@@ -596,7 +649,9 @@ Config: ~/.timmy/config.yaml   ·   Plugins: ~/.timmy/plugins/`)
 
 export function run(): void {
   const cmd = process.argv[2]
-  if (cmd === 'start') void start()
+  if (cmd === 'start') void start(process.argv.slice(3))
+  else if (cmd === 'stop') stopDaemon()
+  else if (cmd === 'logs') logs(process.argv.slice(3))
   else if (cmd === 'init') void init()
   else if (cmd === 'chat') void chat(process.argv.slice(3))
   else if (cmd === 'status') void status()
