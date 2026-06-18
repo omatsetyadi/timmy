@@ -51,6 +51,14 @@ Timmy is built to be extended by writing a plugin — a small package that expor
 
 Reusable capability libraries (OS/machine control, etc.) live in the separate [`agent-tool-calls`](https://github.com/omatsetyadi/agent-tool-calls) repo; Timmy plugins are thin adapters over them. Install a plugin with `timmy plugin install github:user/repo` — it **fetches the prebuilt, checksum-verified bundle from the plugin's GitHub Release** (no clone/build on your machine). `timmy plugin install ./dist` installs a local build for plugin development.
 
+### Official plugins
+
+The first-party set `timmy init` offers out of the box (add any later with `timmy plugin install github:…`):
+
+- [**timmy-plugin-machine**](https://github.com/omatsetyadi/timmy-plugin-machine) — control macOS apps: AppleScript, app focus, a script library.
+- [**timmy-plugin-web**](https://github.com/omatsetyadi/timmy-plugin-web) — web search + fetch a URL (needs a Tavily API key: `timmy plugin set-key web tavily_api_key`).
+- [**timmy-plugin-shell**](https://github.com/omatsetyadi/timmy-plugin-shell) — run shell commands (`runCommand`) with a read-vs-mutate safety classifier.
+
 ## Monorepo layout
 
 ```
