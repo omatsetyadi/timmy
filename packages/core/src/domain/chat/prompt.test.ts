@@ -47,6 +47,13 @@ it('always offers the direct runCommand path and routes by cost', () => {
   expect(p).toMatch(/cheapest|direct/i)
 })
 
+it('injects the current date and time from the provided clock', () => {
+  const p = buildSystemPrompt(cfg, [], false, '', 'text', new Date('2026-06-18T10:00:00Z'))
+  expect(p).toMatch(/current date and time is/)
+  expect(p).toContain('2026')
+  expect(p).toContain('June')
+})
+
 it('mentions askClaude as the agentic doer when claudeAvailable', () => {
   const p = buildSystemPrompt(cfg, [], true)
   expect(p).toMatch(/askClaude/)
@@ -140,7 +147,7 @@ describe('voice register (channel-gated voice_style fragment)', () => {
     expect(msgs[0].content).toContain('SPEAK-SHORT-OUT-LOUD-MARKER')
   })
 
-  it('appends nothing when voice_style is empty — voice prompt equals text prompt', () => {
+  it('applies the baked spoken-register default on voice turns even when voice_style is empty', () => {
     const empty = {
       assistant: {
         name: 'Timmy',
@@ -149,9 +156,14 @@ describe('voice register (channel-gated voice_style fragment)', () => {
         language: { proactive: 'en', conversation: 'auto', supported: ['en'] },
       },
     } as TimmyConfig
-    expect(buildSystemPrompt(empty, [], false, '', 'voice')).toEqual(
-      buildSystemPrompt(empty, [], false, '', 'text'),
-    )
+    const voiceP = buildSystemPrompt(empty, [], false, '', 'voice')
+    // Voice turns get the spoken-register guidance (short, no markdown) regardless of voice_style…
+    expect(voiceP).toContain('spoken aloud')
+    expect(voiceP).not.toEqual(buildSystemPrompt(empty, [], false, '', 'text'))
+  })
+
+  it('leaves text turns free of the spoken-register default', () => {
+    expect(buildSystemPrompt(cfgVoice, [], false, '', 'text')).not.toContain('spoken aloud')
   })
 })
 
