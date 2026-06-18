@@ -160,14 +160,10 @@ export async function memory(args: readonly string[]): Promise<void> {
           const embedder = yield* Embedder
           const all = yield* store.list()
           let done = 0
-          let skipped = 0
           let failed = 0
           for (const e of all) {
-            if (e.embedding) {
-              skipped++
-              continue
-            }
-            const vec = yield* embedder.embed(`${e.name} ${JSON.stringify(e.properties)}`)
+            // Name-only embedding (identity/recall over names, not the noisy property soup).
+            const vec = yield* embedder.embed(e.name)
             if (vec) {
               yield* store.setEmbedding(e.id, vec)
               done++
@@ -176,7 +172,7 @@ export async function memory(args: readonly string[]): Promise<void> {
               failed++
             }
           }
-          return { total: all.length, done, skipped, failed }
+          return { total: all.length, done, skipped: 0, failed }
         }),
       )
       console.log(

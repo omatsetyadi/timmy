@@ -1,7 +1,9 @@
 import { Context, Effect, Layer, Stream } from 'effect'
+import { Config } from '../config/config'
 import { LlmClient } from '../llm/llm-client'
 import { Embedder, type EmbedderImpl } from './embedder'
 import { EntityStore } from './entity-store'
+import { isAssistantRef, isUserRef } from './entity-resolver'
 import type { ExtractedGraph } from './types'
 
 /** Kind used for relation endpoints that weren't among the extracted entities. */
@@ -82,10 +84,14 @@ export function parseExtraction(raw: string): ExtractedGraph {
 export interface MakeExtractorDeps {
   readonly store: Pick<
     Effect.Effect.Success<typeof EntityStore>,
-    'upsert' | 'addRelation' | 'setEmbedding'
+    'resolveAndUpsert' | 'addRelation'
   >
   readonly embedder: Pick<EmbedderImpl, 'embed'>
   readonly complete: (prompt: string) => Effect.Effect<string, unknown>
+  /** Canonical names that coreference maps to — so "I/me/the user" → the one user entity, and the
+   *  assistant's name / "assistant" → the one assistant entity. From the profile. */
+  readonly userName: string
+  readonly assistantName: string
 }
 
 export interface ExtractorImpl {
@@ -99,7 +105,12 @@ export interface ExtractorImpl {
  * The whole pipeline is wrapped so it NEVER fails.
  */
 export function makeExtractor(deps: MakeExtractorDeps): ExtractorImpl {
-  const { store, embedder, complete } = deps
+  const { store, embedder, complete, userName, assistantName } = deps
+
+  // Coreference: collapse first-person / generic-user / assistant references onto the canonical names
+  // BEFORE resolution, so "I", "me", "the user" never spawn a new person — they enrich the one you.
+  const canonical = (name: string): string =>
+    isUserRef(name) ? userName : isAssistantRef(name, assistantName) ? assistantName : name
 
   const extract = (userMsg: string, assistantMsg: string): Effect.Effect<void> =>
     Effect.gen(function* () {
@@ -107,14 +118,18 @@ export function makeExtractor(deps: MakeExtractorDeps): ExtractorImpl {
       const raw = yield* complete(prompt)
       const graph = parseExtraction(raw)
 
+      // Map the RAW extracted name → the resolved canonical id, so relations link correctly even
+      // after coreference/dedup rewrites the entity.
       const idByName = new Map<string, string>()
-      const newlyUpserted: { id: string; name: string; properties: Record<string, unknown> }[] = []
 
-      const upsertNode = (kind: string, name: string, properties: Record<string, unknown>) =>
+      const upsertNode = (kind: string, rawName: string, properties: Record<string, unknown>) =>
         Effect.gen(function* () {
-          const entity = yield* store.upsert({ kind, name, properties })
-          idByName.set(name, entity.id)
-          newlyUpserted.push({ id: entity.id, name, properties })
+          const name = canonical(rawName)
+          // Embed the NAME ONLY for identity matching — props vary and would drown out the name,
+          // wrecking resolution. null → alias-only matching.
+          const vec = yield* embedder.embed(name)
+          const entity = yield* store.resolveAndUpsert({ kind, name, properties }, vec)
+          idByName.set(rawName, entity.id)
           return entity.id
         })
 
@@ -126,11 +141,6 @@ export function makeExtractor(deps: MakeExtractorDeps): ExtractorImpl {
         const fromId = idByName.get(r.from) ?? (yield* upsertNode(FALLBACK_ENTITY_KIND, r.from, {}))
         const toId = idByName.get(r.to) ?? (yield* upsertNode(FALLBACK_ENTITY_KIND, r.to, {}))
         yield* store.addRelation(fromId, r.relation, toId, r.properties)
-      }
-
-      for (const node of newlyUpserted) {
-        const vec = yield* embedder.embed(`${node.name} ${JSON.stringify(node.properties)}`)
-        if (vec !== null) yield* store.setEmbedding(node.id, vec)
       }
     }).pipe(Effect.catchAll(() => Effect.void))
 
@@ -150,6 +160,7 @@ export class Extractor extends Context.Tag('timmy/memory/extractor')<Extractor, 
       const store = yield* EntityStore
       const embedder = yield* Embedder
       const llm = yield* LlmClient
+      const cfg = yield* (yield* Config).get
       const complete = (prompt: string) =>
         llm
           .chat([{ role: 'user', content: prompt }])
@@ -158,7 +169,13 @@ export class Extractor extends Context.Tag('timmy/memory/extractor')<Extractor, 
               chunk.type === 'content' ? acc + chunk.content : acc,
             ),
           )
-      return makeExtractor({ store, embedder, complete })
+      return makeExtractor({
+        store,
+        embedder,
+        complete,
+        userName: cfg.user?.name?.trim() || 'the user',
+        assistantName: cfg.assistant.name,
+      })
     }),
   )
 }

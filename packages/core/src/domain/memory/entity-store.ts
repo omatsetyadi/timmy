@@ -3,8 +3,13 @@ import { randomUUID } from 'node:crypto'
 import { Db } from '../persistence/db'
 import type { SqlError } from '../persistence/errors'
 import { mergeEntities } from './merge'
+import { normalizeName, resolve } from './entity-resolver'
 import type { Entity, Relation } from './types'
 import { bufferToFloats, floatsToBuffer } from './vector'
+
+/** Semantic auto-link bar for entity resolution. Strict — false fuses corrupt the graph; the
+ *  (exact) alias path + accumulating aliases carry most dedup, so the fuzzy step can be conservative. */
+const RESOLVE_THRESHOLD = 0.75
 
 interface EntityRow {
   id: string
@@ -16,6 +21,7 @@ interface EntityRow {
   source: string | null
   last_updated: string
   expires_at: string | null
+  aliases: string | null
 }
 
 interface RelationRow {
@@ -49,6 +55,7 @@ const rowToEntity = (r: EntityRow): Entity => ({
   source: (r.source ?? ENTITY_SOURCE_DEFAULT) as Entity['source'],
   lastUpdated: r.last_updated,
   expiresAt: r.expires_at,
+  aliases: r.aliases ? (JSON.parse(r.aliases) as string[]) : [],
 })
 
 const rowToRelation = (r: RelationRow): Relation => ({
@@ -65,6 +72,15 @@ export class EntityStore extends Context.Tag('timmy/memory/entity-store')<
   EntityStore,
   {
     readonly upsert: (node: UpsertInput) => Effect.Effect<Entity, SqlError>
+    /** Resolve a proposed entity against the existing graph (alias → semantic → create) and write:
+     *  link+enrich an existing canonical (learning the new surface as an alias), or create a new one.
+     *  `vec` = the candidate's embedding (caller embeds; null disables the semantic step). */
+    readonly resolveAndUpsert: (
+      node: UpsertInput,
+      vec: Float32Array | null,
+    ) => Effect.Effect<Entity, SqlError>
+    /** Record an extra surface form for an entity (no-op if already its name or a known alias). */
+    readonly addAlias: (id: string, alias: string) => Effect.Effect<void, SqlError>
     readonly setEmbedding: (id: string, vec: Float32Array) => Effect.Effect<void, SqlError>
     readonly addRelation: (
       from: string,
@@ -157,6 +173,79 @@ export class EntityStore extends Context.Tag('timmy/memory/entity-store')<
 
       const setEmbedding = (id: string, vec: Float32Array) =>
         db.run('UPDATE entities SET embedding = ? WHERE id = ?', [floatsToBuffer(vec), id])
+
+      const addAlias = (id: string, alias: string) =>
+        Effect.gen(function* () {
+          if (!alias) return
+          const row = yield* getRow(id)
+          if (!row) return
+          const cur = row.aliases ? (JSON.parse(row.aliases) as string[]) : []
+          // The name is always an implicit surface — don't store it (or a known alias) as an alias.
+          if (new Set([normalizeName(row.name), ...cur]).has(alias)) return
+          cur.push(alias)
+          yield* db.run('UPDATE entities SET aliases = ? WHERE id = ?', [JSON.stringify(cur), id])
+        })
+
+      const resolveAndUpsert = (node: UpsertInput, vec: Float32Array | null) =>
+        Effect.gen(function* () {
+          const norm = normalizeName(node.name)
+          const rows = yield* db.query<EntityRow>(
+            'SELECT id, name, embedding, aliases FROM entities',
+            [],
+          )
+          const existing = rows.map((r) => ({
+            id: r.id,
+            surfaces: [
+              normalizeName(r.name),
+              ...(r.aliases ? (JSON.parse(r.aliases) as string[]) : []),
+            ],
+            embedding: r.embedding ? bufferToFloats(r.embedding) : null,
+          }))
+          const decision = resolve({ norm, vec }, existing, RESOLVE_THRESHOLD)
+          const t = now()
+
+          if ('link' in decision) {
+            const row = yield* getRow(decision.link)
+            if (row) {
+              const existingProps = row.properties
+                ? (JSON.parse(row.properties) as Record<string, unknown>)
+                : {}
+              const merged = { ...existingProps, ...(node.properties ?? {}) }
+              yield* db.run('UPDATE entities SET properties = ?, last_updated = ? WHERE id = ?', [
+                JSON.stringify(merged),
+                t,
+                decision.link,
+              ])
+              if (!row.embedding && vec)
+                yield* db.run('UPDATE entities SET embedding = ? WHERE id = ?', [
+                  floatsToBuffer(vec),
+                  decision.link,
+                ])
+              yield* addAlias(decision.link, norm) // learn the surface (no-op if it's the name)
+              const updated = yield* getRow(decision.link)
+              return rowToEntity(updated!)
+            }
+          }
+
+          const id = randomUUID()
+          yield* db.run(
+            'INSERT INTO entities (id,kind,name,properties,embedding,confidence,source,last_updated,expires_at,aliases) VALUES (?,?,?,?,?,?,?,?,?,?)',
+            [
+              id,
+              node.kind.trim().toLowerCase(),
+              node.name.trim(),
+              JSON.stringify(node.properties ?? {}),
+              vec ? floatsToBuffer(vec) : null,
+              node.confidence ?? 0.7,
+              node.source ?? ENTITY_SOURCE_DEFAULT,
+              t,
+              node.expiresAt ?? null,
+              JSON.stringify([]),
+            ],
+          )
+          const row = yield* getRow(id)
+          return rowToEntity(row!)
+        })
 
       const addRelation = (
         from: string,
@@ -306,6 +395,8 @@ export class EntityStore extends Context.Tag('timmy/memory/entity-store')<
 
       return {
         upsert,
+        resolveAndUpsert,
+        addAlias,
         setEmbedding,
         addRelation,
         allEmbedded,

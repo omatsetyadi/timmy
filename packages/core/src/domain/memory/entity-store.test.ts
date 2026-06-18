@@ -37,6 +37,62 @@ it.effect('upsert by (kind,name) updates + merges properties (no duplicate row)'
   }).pipe(Effect.provide(TestLayer)),
 )
 
+const fv = (...xs: number[]) => new Float32Array(xs)
+
+it.effect('resolveAndUpsert creates distinct entities when nothing matches', () =>
+  Effect.gen(function* () {
+    const store = yield* EntityStore
+    const a = yield* store.resolveAndUpsert({ kind: 'person', name: 'Omat' }, fv(1, 0, 0))
+    const b = yield* store.resolveAndUpsert({ kind: 'tool', name: 'Spotify' }, fv(0, 1, 0))
+    expect(b.id).not.toBe(a.id)
+    expect(yield* store.list()).toHaveLength(2)
+  }).pipe(Effect.provide(TestLayer)),
+)
+
+it.effect('resolveAndUpsert links by normalized-name match (no duplicate)', () =>
+  Effect.gen(function* () {
+    const store = yield* EntityStore
+    const a = yield* store.resolveAndUpsert({ kind: 'person', name: 'Omat Setyadi' }, null)
+    const b = yield* store.resolveAndUpsert({ kind: 'person', name: 'omat_setyadi' }, null)
+    expect(b.id).toBe(a.id)
+    expect(yield* store.list()).toHaveLength(1)
+  }).pipe(Effect.provide(TestLayer)),
+)
+
+it.effect('resolveAndUpsert links by a learned alias', () =>
+  Effect.gen(function* () {
+    const store = yield* EntityStore
+    const a = yield* store.resolveAndUpsert({ kind: 'person', name: 'Omat Setyadi' }, null)
+    yield* store.addAlias(a.id, 'om')
+    const b = yield* store.resolveAndUpsert({ kind: 'person', name: 'Om' }, null)
+    expect(b.id).toBe(a.id)
+    expect(yield* store.list()).toHaveLength(1)
+  }).pipe(Effect.provide(TestLayer)),
+)
+
+it.effect('resolveAndUpsert links by semantic match and LEARNS the new surface as an alias', () =>
+  Effect.gen(function* () {
+    const store = yield* EntityStore
+    const a = yield* store.resolveAndUpsert({ kind: 'person', name: 'Omat Setyadi' }, fv(1, 0, 0))
+    const b = yield* store.resolveAndUpsert({ kind: 'person', name: 'Mat' }, fv(0.99, 0.01, 0))
+    expect(b.id).toBe(a.id) // near-identical vector → linked
+    expect(yield* store.list()).toHaveLength(1)
+    expect(b.aliases).toContain('mat') // the graph learned "mat" → Omat Setyadi
+  }).pipe(Effect.provide(TestLayer)),
+)
+
+it.effect('addAlias is idempotent and never stores the name itself', () =>
+  Effect.gen(function* () {
+    const store = yield* EntityStore
+    const a = yield* store.resolveAndUpsert({ kind: 'person', name: 'Omat Setyadi' }, null)
+    yield* store.addAlias(a.id, 'om')
+    yield* store.addAlias(a.id, 'om')
+    yield* store.addAlias(a.id, 'omat setyadi') // == normalized name → skipped
+    const e = yield* store.getEntity(a.id)
+    expect(e?.entity.aliases).toEqual(['om'])
+  }).pipe(Effect.provide(TestLayer)),
+)
+
 it.effect('addRelation links two entities; neighbors(1-hop) returns the other', () =>
   Effect.gen(function* () {
     const store = yield* EntityStore

@@ -8,6 +8,9 @@ export interface Entity {
   source: 'conversation' | 'manual' | 'integration'
   lastUpdated: string
   expiresAt?: string | null
+  /** Learned extra surface forms this entity has been called (entity resolution); the name is always
+   *  an implicit surface, so this only holds ADDITIONAL ones. */
+  aliases?: string[]
 }
 
 export interface Relation {

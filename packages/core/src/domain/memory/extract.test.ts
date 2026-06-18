@@ -25,57 +25,81 @@ describe('parseExtraction', () => {
 })
 
 describe('makeExtractor', () => {
-  it('extracts → upserts entities, resolves relation endpoints by name, embeds new nodes', async () => {
+  const fakeStore = (
+    upserts: { kind: string; name: string }[],
+    relations: { from: string; relation: string; to: string }[] = [],
+    embeds: (Float32Array | null)[] = [],
+  ) => ({
+    resolveAndUpsert: (n: { kind: string; name: string }, vec: Float32Array | null) =>
+      Effect.sync(() => {
+        upserts.push({ kind: n.kind, name: n.name })
+        embeds.push(vec)
+        return {
+          id: `${n.kind}:${n.name}`,
+          kind: n.kind,
+          name: n.name,
+          properties: {},
+          confidence: 0.7,
+          source: 'conversation' as const,
+          lastUpdated: '',
+          aliases: [],
+        }
+      }),
+    addRelation: (from: string, relation: string, to: string) =>
+      Effect.sync(() => {
+        relations.push({ from, relation, to })
+        return {}
+      }),
+  })
+  const fakeEmbedder = { embed: () => Effect.succeed(new Float32Array([0.1])) }
+
+  it('resolves entities, resolves relation endpoints by id, embeds each candidate', async () => {
     const upserts: { kind: string; name: string }[] = []
     const relations: { from: string; relation: string; to: string }[] = []
-    const embedded: string[] = []
-    const byId: Record<string, string> = {}
-    const fakeStore = {
-      upsert: (n: { kind: string; name: string }) =>
-        Effect.sync(() => {
-          upserts.push({ kind: n.kind, name: n.name })
-          const id = `${n.kind}:${n.name}`
-          byId[n.name] = id
-          return {
-            id,
-            ...n,
-            properties: {},
-            confidence: 0.7,
-            source: 'conversation',
-            lastUpdated: '',
-          }
-        }),
-      addRelation: (from: string, relation: string, to: string) =>
-        Effect.sync(() => {
-          relations.push({ from, relation, to })
-          return {}
-        }),
-      setEmbedding: (id: string) =>
-        Effect.sync(() => {
-          embedded.push(id)
-        }),
-    }
-    const fakeEmbedder = { embed: () => Effect.succeed(new Float32Array([0.1])) }
-    const complete = () =>
-      Effect.succeed(
-        '{"entities":[{"kind":"person","name":"Omat"},{"kind":"company","name":"Jitera"}],"relations":[{"from":"Omat","relation":"works_at","to":"Jitera"}]}',
-      )
+    const embeds: (Float32Array | null)[] = []
     const ex = makeExtractor({
-      store: fakeStore as never,
+      store: fakeStore(upserts, relations, embeds) as never,
       embedder: fakeEmbedder as never,
-      complete,
+      complete: () =>
+        Effect.succeed(
+          '{"entities":[{"kind":"person","name":"Omat"},{"kind":"company","name":"Jitera"}],"relations":[{"from":"Omat","relation":"works_at","to":"Jitera"}]}',
+        ),
+      userName: 'Omat',
+      assistantName: 'Timmy',
     })
     await Effect.runPromise(ex.extract('I work at Jitera', 'ok'))
     expect(upserts).toEqual([
       { kind: 'person', name: 'Omat' },
       { kind: 'company', name: 'Jitera' },
     ])
-    expect(relations).toEqual([{ from: 'person:Omat', relation: 'works_at', to: 'company:Jitera' }]) // endpoints resolved to ids
-    expect(embedded.length).toBe(2)
+    expect(relations).toEqual([{ from: 'person:Omat', relation: 'works_at', to: 'company:Jitera' }])
+    expect(embeds).toHaveLength(2) // each candidate embedded for semantic resolution
   })
+
+  it('coreference: "I" / "the user" collapse onto the canonical user name', async () => {
+    const upserts: { kind: string; name: string }[] = []
+    const ex = makeExtractor({
+      store: fakeStore(upserts) as never,
+      embedder: { embed: () => Effect.succeed(null) } as never,
+      complete: () =>
+        Effect.succeed(
+          '{"entities":[{"kind":"person","name":"I"},{"kind":"person","name":"the user"}],"relations":[]}',
+        ),
+      userName: 'Omat',
+      assistantName: 'Timmy',
+    })
+    await Effect.runPromise(ex.extract('hi', 'ok'))
+    expect(upserts.map((u) => u.name)).toEqual(['Omat', 'Omat']) // never spawn a new "I"/"the user"
+  })
+
   it('never throws on a model/parse failure (detached safety)', async () => {
-    const complete = () => Effect.fail(new Error('model down'))
-    const ex = makeExtractor({ store: {} as never, embedder: {} as never, complete })
+    const ex = makeExtractor({
+      store: {} as never,
+      embedder: {} as never,
+      complete: () => Effect.fail(new Error('model down')),
+      userName: 'U',
+      assistantName: 'A',
+    })
     await Effect.runPromise(ex.extract('x', 'y')) // resolves, no throw
   })
 })

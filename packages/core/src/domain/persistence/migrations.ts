@@ -4,7 +4,8 @@ export interface Migration {
 }
 
 /** Ordered, append-only. `001` = the original threads/messages schema (was the interim bootstrap),
- *  `002` = the memory entity graph. RAG (Phase 6) appends `003`. Never edit a shipped migration. */
+ *  `002` = the memory entity graph, `003` = entity aliases (the learned surface forms entity
+ *  resolution accumulates). RAG (Phase 6) appends the next version. Never edit a shipped migration. */
 export const MIGRATIONS: Migration[] = [
   {
     version: 1,
@@ -38,6 +39,13 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_relations_from ON relations(from_entity);
       CREATE INDEX IF NOT EXISTS idx_relations_to ON relations(to_entity);
     `,
+  },
+  {
+    version: 3,
+    // Learned aliases: a JSON string[] of extra surface forms an entity has been called. The
+    // (normalized) `name` is always an implicit surface; aliases only ADD to it. Entity resolution
+    // appends here whenever a new surface links to an existing canonical, so the graph learns synonyms.
+    sql: `ALTER TABLE entities ADD COLUMN aliases TEXT;`,
   },
 ]
 
