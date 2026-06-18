@@ -102,6 +102,66 @@ it.effect('creates thread, streams chunks, persists user + assistant', () =>
   ),
 )
 
+// Empty-completion guard: a turn with NO text and NO tool call (weak/cloud frontdesks do this
+// intermittently) must NOT end on a silent blank — retry once, recover the content.
+it.effect('retries once on an empty completion and streams the recovered content', () => {
+  let calls = 0
+  const FlakyLlm = Layer.succeed(
+    LlmClient,
+    LlmClient.of({
+      chat: () => {
+        calls++
+        return calls === 1
+          ? Stream.fromIterable([{ type: 'finish', reason: 'stop' } as const]) // empty turn
+          : Stream.fromIterable([
+              { type: 'content', content: 'recovered' } as const,
+              { type: 'finish', reason: 'stop' } as const,
+            ])
+      },
+      isAvailable: () => Effect.succeed(true),
+      detectCapabilities: () =>
+        Effect.succeed({ tools: true, vision: false, audio: false, realtime: false }),
+    }),
+  )
+  return Effect.gen(function* () {
+    const { stream } = yield* (yield* ChatService).send({ message: 'hey' })
+    const chunks = Chunk.toArray(yield* Stream.runCollect(stream))
+    const text = chunks.flatMap((c) => (c.type === 'content' ? [c.content] : [])).join('')
+    expect(text).toBe('recovered')
+    expect(calls).toBe(2) // retried exactly once
+  }).pipe(
+    Effect.provide(
+      ChatService.Live.pipe(
+        Layer.provide(Layer.mergeAll(ConfigStub, ThreadStub, FlakyLlm, EmptyToolsLayer)),
+      ),
+    ),
+  )
+})
+
+it.effect('falls back to a clear line when the completion is empty even after retry', () => {
+  const EmptyLlm = Layer.succeed(
+    LlmClient,
+    LlmClient.of({
+      chat: () => Stream.fromIterable([{ type: 'finish', reason: 'stop' } as const]),
+      isAvailable: () => Effect.succeed(true),
+      detectCapabilities: () =>
+        Effect.succeed({ tools: true, vision: false, audio: false, realtime: false }),
+    }),
+  )
+  return Effect.gen(function* () {
+    const { stream } = yield* (yield* ChatService).send({ message: 'hey' })
+    const chunks = Chunk.toArray(yield* Stream.runCollect(stream))
+    const text = chunks.flatMap((c) => (c.type === 'content' ? [c.content] : [])).join('')
+    expect(text).toContain('blanked') // the fallback line, not a silent blank
+  }).pipe(
+    Effect.provide(
+      ChatService.Live.pipe(
+        Layer.provide(Layer.mergeAll(ConfigStub, ThreadStub, EmptyLlm, EmptyToolsLayer)),
+      ),
+    ),
+  )
+})
+
 // NIT-1: a DB write failure (createThread) must surface as a typed error in
 // send's ChatError channel, not be swallowed as a defect via Effect.orDie.
 it.effect('surfaces SqlError from createThread as a typed error', () =>

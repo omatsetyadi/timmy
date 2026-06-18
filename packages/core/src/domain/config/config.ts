@@ -140,7 +140,11 @@ const DEFAULTS: TimmyConfig = {
   memory: {
     learning_mode: true,
     notify_on_learn: true,
-    always_kinds: ['preference'],
+    // Empty: recall is query-driven (semantic top-K + neighbors). The always-on "core memory" role
+    // is now the user PROFILE (assistant/user about+style); force-injecting a whole entity kind every
+    // turn floods recall (e.g. all `preference` entities) regardless of the message. Set a kind here
+    // only for a genuinely tiny, always-relevant set.
+    always_kinds: [],
     recall_limit: 5,
     recall_budget: 15,
     search_limit: 25,
@@ -163,6 +167,8 @@ function loadConfig(path: string): TimmyConfig {
       frontdesk: { ...DEFAULTS.models.frontdesk, ...f.models?.frontdesk },
       ...(f.models?.reasoning ? { reasoning: f.models.reasoning } : {}),
       ...(f.models?.vision ? { vision: f.models.vision } : {}),
+      ...(f.models?.embedding ? { embedding: f.models.embedding } : {}),
+      ...(f.models?.memory ? { memory: f.models.memory } : {}),
     },
     ...(f.providers ? { providers: f.providers } : {}),
     permissions: { ...DEFAULTS.permissions, ...f.permissions },

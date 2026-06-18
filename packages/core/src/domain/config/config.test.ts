@@ -93,7 +93,7 @@ describe('memory config', () => {
     expect(cfg.memory).toEqual({
       learning_mode: true,
       notify_on_learn: true,
-      always_kinds: ['preference'],
+      always_kinds: [],
       recall_limit: 5,
       recall_budget: 15,
       search_limit: 25,

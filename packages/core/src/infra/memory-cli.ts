@@ -3,6 +3,7 @@ import { load, dump } from 'js-yaml'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { CONFIG_PATH, readConfigSync } from '../domain/config/config'
 import { EntityStore } from '../domain/memory/entity-store'
+import { Embedder } from '../domain/memory/embedder'
 import { buildRuntime } from './runtime'
 
 // ── pure helpers (unit-tested) ───────────────────────────────────────────────
@@ -149,9 +150,42 @@ export async function memory(args: readonly string[]): Promise<void> {
       }
       await runtime.runPromise(EntityStore.pipe(Effect.flatMap((s) => s.delete(id))))
       console.log('deleted')
+    } else if (sub === 'reindex') {
+      // Embed every entity that lacks a vector — one-time backfill, or after changing the embed
+      // model. The first call downloads + loads the model (slow once), then it's a few ms each.
+      console.log('reindexing… (first run downloads the embedding model — one-time)')
+      const r = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* EntityStore
+          const embedder = yield* Embedder
+          const all = yield* store.list()
+          let done = 0
+          let skipped = 0
+          let failed = 0
+          for (const e of all) {
+            if (e.embedding) {
+              skipped++
+              continue
+            }
+            const vec = yield* embedder.embed(`${e.name} ${JSON.stringify(e.properties)}`)
+            if (vec) {
+              yield* store.setEmbedding(e.id, vec)
+              done++
+              if (done % 20 === 0) console.log(`  …${done} embedded`)
+            } else {
+              failed++
+            }
+          }
+          return { total: all.length, done, skipped, failed }
+        }),
+      )
+      console.log(
+        `reindex done: ${r.done} embedded, ${r.skipped} already had vectors, ${r.failed} failed (of ${r.total}).` +
+          (r.failed > 0 ? '\n(failures usually mean the embed model is unavailable.)' : ''),
+      )
     } else {
       console.error(
-        'Usage: timmy memory <list [--kind <k>] | show <id> | add --kind <k> --name <n> [--prop k=v ...] | update <id> --prop k=v ... | delete <id> | learning <on|off|status>>',
+        'Usage: timmy memory <list [--kind <k>] | show <id> | add --kind <k> --name <n> [--prop k=v ...] | update <id> --prop k=v ... | delete <id> | reindex | learning <on|off|status>>',
       )
       process.exit(1)
     }

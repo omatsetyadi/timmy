@@ -28,6 +28,10 @@ export interface SendParams {
  *  Sized generously; a genuine task that exceeds this is almost certainly stuck in a loop. */
 const MAX_TOOL_ITERATIONS = 25
 
+/** Shown when the model returns a truly empty completion (no text, no tool call) even after one
+ *  retry — so the user gets a clear line instead of a confusing blank. */
+const EMPTY_COMPLETION_FALLBACK = 'Hmm, I blanked there — mind saying that again?'
+
 export class ChatService extends Context.Tag('timmy/chat/service')<
   ChatService,
   {
@@ -139,17 +143,21 @@ export class ChatService extends Context.Tag('timmy/chat/service')<
             const runIteration = (
               convo: ChatMessage[],
               iteration: number,
+              retriedEmpty = false,
             ): Effect.Effect<void, LlmError> =>
               Effect.gen(function* () {
                 const collected: ToolCallChunk[] = []
+                let producedContent = false
                 // Forward this turn's chunks to the consumer as they arrive,
                 // accumulating any tool_call chunks for the post-turn execution.
                 yield* llm.chat(convo, tools).pipe(
                   Stream.runForEach((chunk) =>
                     Effect.gen(function* () {
                       if (chunk.type === 'tool_call') collected.push(chunk.toolCall)
-                      if (chunk.type === 'content')
+                      if (chunk.type === 'content') {
+                        producedContent = true
                         yield* Ref.update(accRef, (s) => s + chunk.content)
+                      }
                       emit.single(chunk)
                     }),
                   ),
@@ -159,6 +167,19 @@ export class ChatService extends Context.Tag('timmy/chat/service')<
 
                 // No tools requested → the model is done. End the stream.
                 if (collected.length === 0) {
+                  // Empty completion (no text AND no tool call) — weak/cloud frontdesks do this
+                  // intermittently. Don't end on a silent blank: retry the same turn ONCE (transient,
+                  // usually recovers), then surface a clear line so the user never sees nothing.
+                  if (!producedContent && !retriedEmpty) {
+                    yield* runIteration(convo, iteration, true)
+                    return
+                  }
+                  if (!producedContent) {
+                    yield* Ref.update(accRef, (s) => s + EMPTY_COMPLETION_FALLBACK)
+                    yield* Effect.sync(() =>
+                      emit.single({ type: 'content', content: EMPTY_COMPLETION_FALLBACK }),
+                    )
+                  }
                   yield* Effect.sync(() => emit.end())
                   return
                 }

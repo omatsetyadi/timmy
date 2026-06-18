@@ -563,6 +563,7 @@ Memory (the knowledge graph Timmy learns about you):
   memory add --kind <k> --name <n> [--prop k=v ...]   Manually add an entity
   memory update <id> --prop k=v ...  Merge properties into an entity
   memory delete <id>                 Forget an entity
+  memory reindex                     (Re)embed all entities — run once, or after changing the embed model
   memory learning <on|off|status>    Toggle whether Timmy learns from conversations
 
 Profile (the assistant's identity + your own profile, injected into every system prompt):
