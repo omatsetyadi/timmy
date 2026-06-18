@@ -188,7 +188,17 @@ function loadConfig(path: string): TimmyConfig {
       auth: { ...DEFAULTS.server.auth, ...f.server?.auth },
     },
     models: {
-      frontdesk: { ...DEFAULTS.models.frontdesk, ...f.models?.frontdesk },
+      // Use the configured frontdesk AS-IS (only filling a missing provider/model from defaults).
+      // Do NOT spread DEFAULTS.frontdesk wholesale: its `base_url` is Ollama's localhost:11434, which
+      // would leak into a cloud frontdesk that omits base_url → it'd POST to Ollama and 404. With no
+      // base_url, a known cloud provider resolves via KNOWN_BASE_URLS and Ollama falls back to localhost.
+      frontdesk: f.models?.frontdesk
+        ? {
+            provider: f.models.frontdesk.provider ?? DEFAULTS.models.frontdesk.provider,
+            model: f.models.frontdesk.model ?? DEFAULTS.models.frontdesk.model,
+            ...(f.models.frontdesk.base_url ? { base_url: f.models.frontdesk.base_url } : {}),
+          }
+        : DEFAULTS.models.frontdesk,
       ...(f.models?.reasoning ? { reasoning: f.models.reasoning } : {}),
       ...(f.models?.vision ? { vision: f.models.vision } : {}),
       ...(f.models?.embedding ? { embedding: f.models.embedding } : {}),

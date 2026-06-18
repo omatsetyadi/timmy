@@ -32,6 +32,42 @@ const writeCfg = (yaml: string): string => {
   return path
 }
 
+describe('frontdesk base_url merge', () => {
+  it('a cloud frontdesk without base_url does NOT inherit the Ollama default localhost', () => {
+    // Regression: the old `{ ...DEFAULTS.frontdesk, ...file }` leaked DEFAULTS' localhost:11434 into a
+    // cloud frontdesk → it POSTed to Ollama and 404'd. A missing base_url must resolve via the provider.
+    const f = readConfigSync(
+      writeCfg('models:\n  frontdesk: { provider: deepseek, model: deepseek-v4-flash }\n'),
+    ).models.frontdesk
+    expect(f.provider).toBe('deepseek')
+    expect(f.model).toBe('deepseek-v4-flash')
+    expect(f.base_url).toBeUndefined()
+  })
+
+  it('an ollama frontdesk without base_url stays clean (runtime supplies localhost)', () => {
+    expect(
+      readConfigSync(writeCfg('models:\n  frontdesk: { provider: ollama, model: qwen3.5:35b }\n'))
+        .models.frontdesk.base_url,
+    ).toBeUndefined()
+  })
+
+  it('an explicit frontdesk base_url is kept', () => {
+    expect(
+      readConfigSync(
+        writeCfg('models:\n  frontdesk: { provider: x, model: y, base_url: http://host:1 }\n'),
+      ).models.frontdesk.base_url,
+    ).toBe('http://host:1')
+  })
+
+  it('no frontdesk in the file → the full Ollama default (with its localhost base_url)', () => {
+    expect(readConfigSync('/nope/nope.yaml').models.frontdesk).toEqual({
+      provider: 'ollama',
+      base_url: 'http://localhost:11434',
+      model: 'qwen3:14b',
+    })
+  })
+})
+
 describe('config providers + reasoning', () => {
   it('parses a providers map and models.reasoning.default', () => {
     const path = writeCfg(`
