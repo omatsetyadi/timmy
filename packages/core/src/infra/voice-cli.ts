@@ -233,7 +233,12 @@ async function voiceInstallFlow(): Promise<void> {
   )
   rl.close()
   if (ans !== 'y' && ans !== 'yes') return void console.log('Cancelled.')
-  const r = installVoice()
+  let r
+  try {
+    r = installVoice() // clone + uv sync — can throw on a network/build failure
+  } catch (e) {
+    return fail(`Install failed: ${e instanceof Error ? e.message : String(e)}`)
+  }
   if (r.ok) return void console.log('Voice installed.  Start it with: timmy voice start')
   if (r.reason === 'already-installed') return void console.log('Voice is already installed.')
   return fail(`Install failed (${r.reason}).`)

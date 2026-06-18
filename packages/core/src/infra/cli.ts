@@ -45,7 +45,7 @@ import { buildRuntime } from './runtime'
 import { buildServer } from './server'
 import { isRunning, startBackground, stop, type DaemonPaths } from './daemon-supervisor'
 import { AUTOSTART_LABEL, disableAutostart, enableAutostart, isAutostartEnabled } from './autostart'
-import { isVoiceInstalled, startVoice, stopVoice } from './voice-lifecycle'
+import { installVoice, isVoiceInstalled, preflight, startVoice, stopVoice } from './voice-lifecycle'
 
 const VERSION = '0.1.0'
 
@@ -55,13 +55,20 @@ const CORE_PATHS: DaemonPaths = {
   logFile: join(CONFIG_DIR, 'timmy.log'),
 }
 
-/** Command to re-launch THIS program with extra args. Handles both `node dist/index.js …`
- *  (dev: argv[1] is the script) and a compiled single binary (argv[1] is the subcommand). */
+/** Command to re-launch THIS program with extra args. Distinguishes:
+ *   - `node dist/index.js …` / `bun src/index.ts …` (dev): argv[1] is the script → re-run
+ *     `<node|bun> <script> …extra`.
+ *   - compiled single binary: argv[1] is Bun's embedded entry under `/$bunfs/` (or `~BUN` on Windows)
+ *     → re-run the binary ITSELF as `<binary> …extra`; passing that virtual path as an arg makes the
+ *     child see it as an (invalid) command.
+ *  We key off the `/$bunfs/` marker, NOT the file extension or `existsSync` — Bun's virtual FS reports
+ *  the embedded entry as both `.js` and existing, so those checks misfire inside a compiled binary. */
 function relaunch(extra: string[]): { cmd: string; args: string[] } {
-  const selfIsScript = /\.(c?js|mjs|ts)$/.test(process.argv[1] ?? '')
-  return selfIsScript
-    ? { cmd: process.execPath, args: [process.argv[1], ...extra] }
-    : { cmd: process.execPath, args: extra }
+  const entry = process.argv[1] ?? ''
+  const compiledBinary = entry.startsWith('/$bunfs/') || entry.includes('~BUN')
+  return compiledBinary
+    ? { cmd: process.execPath, args: extra }
+    : { cmd: process.execPath, args: [entry, ...extra] }
 }
 
 /** `timmy start` — background by default (pidfile + logfile); `--foreground`/`-f` runs inline (dev). */
@@ -461,10 +468,19 @@ function yolo(args: readonly string[]): void {
 async function chat(args: readonly string[]): Promise<void> {
   const i = args.indexOf('--thread')
   const threadArg = i >= 0 ? args[i + 1] : undefined
-  // The Ink TUI ships as a tsup ESM bundle (Ink is ESM-only w/ top-level await; a static import
-  // would crash the CJS build). Load it via dynamic import() at runtime.
-  const appModule = './chat-tui/app.mjs'
-  const { runChat } = (await import(appModule)) as typeof import('./chat-tui/app')
+  // The Ink TUI is ESM-only (top-level await), so it loads differently per runtime:
+  //  - **Bun binary:** import the SOURCE — a literal specifier so `bun build --compile` embeds the
+  //    TUI (Bun runs Ink's ESM natively). Without this it's absent from the binary → "module not found".
+  //  - **Node (tsc/CJS dist):** load the separate tsup-built `.mjs` bundle (Ink can't live in the CJS
+  //    dist). A *variable* specifier keeps Bun from trying to resolve this dist-only file at build time.
+  let runChat: typeof import('./chat-tui/app').runChat
+  if (typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined') {
+    // @ts-expect-error — Bun-only path: tsc rejects the .tsx specifier, but this never runs under Node.
+    ;({ runChat } = await import('./chat-tui/app.tsx'))
+  } else {
+    const appModule = './chat-tui/app.mjs'
+    ;({ runChat } = (await import(appModule)) as typeof import('./chat-tui/app'))
+  }
   await runChat({ threadArg })
 }
 
@@ -600,6 +616,38 @@ async function init(): Promise<void> {
       )
     } else {
       console.log('  skipped — add later with `timmy plugin install github:<user>/<repo>`')
+    }
+
+    // Voice (optional, hands-free) — a separate Python daemon (clone + uv sync). Heavy + a mic-privacy
+    // choice, so default NO. Mirrors `timmy voice install` (preflight, no silent toolchain installs).
+    console.log(
+      '\nVoice (optional) — hands-free: say a wake word and talk. Needs Python 3.11+ and uv.',
+    )
+    const wantVoice = (await ask('Install Timmy voice now? (y/N) ')).toLowerCase()
+    if (wantVoice === 'y' || wantVoice === 'yes') {
+      const pre = preflight()
+      if (!pre.python) {
+        console.log('  ✗ Python 3.11+ not found — install it, then run `timmy voice install`.')
+      } else if (!pre.uv) {
+        console.log(
+          '  ✗ uv not found — `curl -LsSf https://astral.sh/uv/install.sh | sh`, then `timmy voice install`.',
+        )
+      } else {
+        try {
+          const r = installVoice() // clone + uv sync (progress streams to the terminal)
+          console.log(
+            r.ok
+              ? '  ✓ voice installed — start it with `timmy voice start` (or `timmy voice autostart on`)'
+              : `  ✗ voice install failed (${r.reason}) — retry with \`timmy voice install\``,
+          )
+        } catch (e) {
+          // A clone/uv-sync failure must never abort init (config + plugins are already done).
+          const msg = e instanceof Error ? e.message : String(e)
+          console.log(`  ✗ voice install failed: ${msg} — retry later with \`timmy voice install\``)
+        }
+      }
+    } else {
+      console.log('  skipped — add later with `timmy voice install`')
     }
 
     console.log(

@@ -31,13 +31,30 @@ jobs:
       # dist/ — absent after a plain install, so the bun compile can't resolve it without this.
       - run: pnpm build
 
-      # Compile the standalone binary (bun:sqlite, embedded keyring/onnx — no Node needed at runtime).
+      # Compile the standalone binary (bun:sqlite, embedded keyring/onnx + the Ink TUI — no Node at
+      # runtime). Uses build-binary.ts (a Bun.build script) so it can stub Ink's optional
+      # react-devtools-core; the plain `bun build --compile` CLI can't and fails to resolve it.
       - name: Build single binary (darwin-arm64)
         working-directory: packages/core
-        run: bun build --compile src/index.ts --outfile "$GITHUB_WORKSPACE/timmy-darwin-arm64"
+        run: bun build-binary.ts "$GITHUB_WORKSPACE/timmy-darwin-arm64"
 
       - name: Smoke-test the binary
         run: ./timmy-darwin-arm64 version
+
+      # Compiled-binary smoke — dev-mode runs hid two binary-only bugs: the chat TUI wasn't embedded
+      # ("module not found"), and background `start` mis-parsed argv in the bunfs (daemon never ran).
+      # Deterministic checks for both (no TTY needed → no hang): the TUI must be IN the binary, and the
+      # background daemon must actually come up + serve /health.
+      - name: Smoke-test the compiled binary (embedded TUI + start → /health → stop)
+        run: |
+          strings ./timmy-darwin-arm64 | grep -q "Talk to your machine" || { echo "chat TUI not embedded in the binary"; exit 1; }
+          export HOME="$(mktemp -d)"
+          mkdir -p "$HOME/.timmy"
+          printf 'server: { host: 127.0.0.1, port: 3737, auth: { enabled: false, token: keychain } }\n' > "$HOME/.timmy/config.yaml"
+          ./timmy-darwin-arm64 start
+          sleep 5
+          curl -fsS --max-time 5 http://127.0.0.1:3737/health
+          ./timmy-darwin-arm64 stop
 
       - name: Generate checksums
         run: shasum -a 256 timmy-darwin-arm64 > SHA256SUMS
