@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { Context, Effect, Layer } from 'effect'
+import { Context, Effect, Exit, Layer } from 'effect'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { SqlError } from './errors'
@@ -11,6 +11,9 @@ export class Db extends Context.Tag('timmy/persistence/db')<
     readonly run: (sql: string, params: unknown[]) => Effect.Effect<void, SqlError>
     readonly query: <T>(sql: string, params: unknown[]) => Effect.Effect<T[], SqlError>
     readonly get: <T>(sql: string, params: unknown[]) => Effect.Effect<T | undefined, SqlError>
+    /** Run `body` atomically: BEGIN → body → COMMIT, or ROLLBACK if it fails/interrupts. Use for
+     *  multi-write operations (e.g. merge) so a partial failure can't corrupt the graph. */
+    readonly transaction: <A, E>(body: Effect.Effect<A, E>) => Effect.Effect<A, E | SqlError>
   }
 >() {
   static Live = (path: string) =>
@@ -31,12 +34,24 @@ export class Db extends Context.Tag('timmy/persistence/db')<
         for (const m of pendingMigrations(current, MIGRATIONS)) runMigration(m)
         const wrap = <T>(f: () => T) =>
           Effect.try({ try: f, catch: (e) => new SqlError({ message: 'sql failed', cause: e }) })
+        const exec = (sql: string) => wrap(() => void db.exec(sql))
         return {
           run: (sql, params) => wrap(() => void db.prepare(sql).run(...params)),
           query: <T>(sql: string, params: unknown[]) =>
             wrap(() => db.prepare(sql).all(...params) as T[]),
           get: <T>(sql: string, params: unknown[]) =>
             wrap(() => db.prepare(sql).get(...params) as T | undefined),
+          transaction: <A, E>(body: Effect.Effect<A, E>): Effect.Effect<A, E | SqlError> =>
+            Effect.acquireUseRelease(
+              exec('BEGIN'),
+              () => body,
+              (_, exit) =>
+                // COMMIT on success, ROLLBACK on failure/interrupt. A failed COMMIT/ROLLBACK is a
+                // defect (the connection is hosed) — surface it loudly rather than swallow.
+                Exit.isSuccess(exit)
+                  ? exec('COMMIT').pipe(Effect.orDie)
+                  : exec('ROLLBACK').pipe(Effect.orDie),
+            ),
         }
       }),
     )

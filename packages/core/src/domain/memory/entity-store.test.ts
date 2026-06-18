@@ -93,6 +93,35 @@ it.effect('addAlias is idempotent and never stores the name itself', () =>
   }).pipe(Effect.provide(TestLayer)),
 )
 
+it.effect('transaction rolls back every write when the body fails (atomicity)', () =>
+  Effect.gen(function* () {
+    const db = yield* Db
+    const attempt = db.transaction(
+      Effect.gen(function* () {
+        yield* db.run(
+          "INSERT INTO entities (id,kind,name,last_updated) VALUES ('z','person','Z','t')",
+          [],
+        )
+        return yield* Effect.fail(new Error('boom'))
+      }),
+    )
+    yield* Effect.either(attempt) // swallow the failure
+    const row = yield* db.get("SELECT id FROM entities WHERE id = 'z'", [])
+    expect(row).toBeUndefined() // the insert was rolled back — no partial write
+  }).pipe(Effect.provide(Db.Live(':memory:'))),
+)
+
+it.effect('transaction commits writes on success', () =>
+  Effect.gen(function* () {
+    const db = yield* Db
+    yield* db.transaction(
+      db.run("INSERT INTO entities (id,kind,name,last_updated) VALUES ('y','person','Y','t')", []),
+    )
+    const row = yield* db.get<{ id: string }>("SELECT id FROM entities WHERE id = 'y'", [])
+    expect(row?.id).toBe('y')
+  }).pipe(Effect.provide(Db.Live(':memory:'))),
+)
+
 it.effect('addRelation links two entities; neighbors(1-hop) returns the other', () =>
   Effect.gen(function* () {
     const store = yield* EntityStore

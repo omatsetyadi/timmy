@@ -357,41 +357,45 @@ export class EntityStore extends Context.Tag('timmy/memory/entity-store')<
       const deleteRelation = (id: string) => db.run('DELETE FROM relations WHERE id = ?', [id])
 
       const merge = (idA: string, idB: string) =>
-        Effect.gen(function* () {
-          const rowA = yield* getRow(idA)
-          const rowB = yield* getRow(idB)
-          if (!rowA || !rowB) return null
+        // Atomic — a partial merge (relations rewired but the duplicate not yet deleted) would
+        // corrupt the graph; run the whole sequence in one transaction (rolls back on any failure).
+        db.transaction(
+          Effect.gen(function* () {
+            const rowA = yield* getRow(idA)
+            const rowB = yield* getRow(idB)
+            if (!rowA || !rowB) return null
 
-          const merged = mergeEntities(rowToEntity(rowA), rowToEntity(rowB))
-          yield* db.run(
-            'UPDATE entities SET properties = ?, confidence = ?, last_updated = ? WHERE id = ?',
-            [JSON.stringify(merged.properties), merged.confidence, merged.lastUpdated, idA],
-          )
+            const merged = mergeEntities(rowToEntity(rowA), rowToEntity(rowB))
+            yield* db.run(
+              'UPDATE entities SET properties = ?, confidence = ?, last_updated = ? WHERE id = ?',
+              [JSON.stringify(merged.properties), merged.confidence, merged.lastUpdated, idA],
+            )
 
-          // Rewire B's relations onto A.
-          yield* db.run('UPDATE relations SET from_entity = ? WHERE from_entity = ?', [idA, idB])
-          yield* db.run('UPDATE relations SET to_entity = ? WHERE to_entity = ?', [idA, idB])
-          // Drop self-loops created by the rewire.
-          yield* db.run('DELETE FROM relations WHERE from_entity = to_entity', [])
-          // Dedupe exact (from,relation,to) edges, keeping the lowest id.
-          const dupes = yield* db.query<RelationRow>(
-            'SELECT * FROM relations WHERE from_entity = ? OR to_entity = ?',
-            [idA, idA],
-          )
-          const seen = new Set<string>()
-          for (const r of dupes) {
-            const key = `${r.from_entity} ${r.relation} ${r.to_entity}`
-            if (seen.has(key)) {
-              yield* db.run('DELETE FROM relations WHERE id = ?', [r.id])
-            } else {
-              seen.add(key)
+            // Rewire B's relations onto A.
+            yield* db.run('UPDATE relations SET from_entity = ? WHERE from_entity = ?', [idA, idB])
+            yield* db.run('UPDATE relations SET to_entity = ? WHERE to_entity = ?', [idA, idB])
+            // Drop self-loops created by the rewire.
+            yield* db.run('DELETE FROM relations WHERE from_entity = to_entity', [])
+            // Dedupe exact (from,relation,to) edges, keeping the lowest id.
+            const dupes = yield* db.query<RelationRow>(
+              'SELECT * FROM relations WHERE from_entity = ? OR to_entity = ?',
+              [idA, idA],
+            )
+            const seen = new Set<string>()
+            for (const r of dupes) {
+              const key = `${r.from_entity} ${r.relation} ${r.to_entity}`
+              if (seen.has(key)) {
+                yield* db.run('DELETE FROM relations WHERE id = ?', [r.id])
+              } else {
+                seen.add(key)
+              }
             }
-          }
 
-          yield* db.run('DELETE FROM entities WHERE id = ?', [idB])
-          const row = yield* getRow(idA)
-          return row ? rowToEntity(row) : null
-        })
+            yield* db.run('DELETE FROM entities WHERE id = ?', [idB])
+            const row = yield* getRow(idA)
+            return row ? rowToEntity(row) : null
+          }),
+        )
 
       return {
         upsert,
