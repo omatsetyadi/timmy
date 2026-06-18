@@ -44,7 +44,7 @@ export async function buildServer(
 ): Promise<FastifyInstance> {
   const app = Fastify({ logger: true })
 
-  await registerAuth(app, config, runtime)
+  const authorize = await registerAuth(app, config, runtime)
 
   app.get('/health', async () => ({ ok: true }))
 
@@ -249,6 +249,16 @@ export async function buildServer(
   // emitting the same StreamChunk shapes /chat streams as NDJSON. One active turn per socket;
   // a new `chat` or `interrupt` cancels the in-flight turn (barge-in). See voice spec §3.2.
   const io = new SocketIOServer(app.server, { path: '/stream' })
+  // Socket.IO attaches to the raw http server, so Fastify's onRequest auth hook never runs for the
+  // WS handshake. Gate it here with the SAME `authorize` predicate so the voice socket can't bypass
+  // auth. Clients pass the bearer token via `auth: { token }` (preferred) or an Authorization header.
+  io.use((socket, next) => {
+    const fromAuth = socket.handshake.auth?.token
+    const token =
+      typeof fromAuth === 'string' ? fromAuth : bearerToken(socket.handshake.headers.authorization)
+    if (authorize(token)) return next()
+    next(new Error('unauthorized'))
+  })
   io.on('connection', (socket) => {
     app.log.info({ id: socket.id }, 'socket connected')
     let active: Fiber.RuntimeFiber<void, unknown> | null = null
@@ -392,17 +402,29 @@ function pumpChat(
   )
 }
 
+/** Extract the bearer token from an Authorization header (`''` if absent/malformed). */
+const bearerToken = (header: string | undefined): string => {
+  const h = header ?? ''
+  return h.startsWith('Bearer ') ? h.slice('Bearer '.length) : ''
+}
+
+/** Decides whether a presented token is authorized. Shared by the HTTP hook and the WS handshake. */
+type AuthGate = (token: string) => boolean
+
 /**
  * Bearer auth. With a token configured, enforce it on all non-public routes.
  * Without a token: allow on loopback (local dev convenience, logged), but
  * fail closed on a non-loopback host (network exposure must be authenticated).
+ *
+ * Returns an {@link AuthGate} so the WS handshake (which bypasses Fastify's onRequest hook) enforces
+ * the exact same policy.
  */
 async function registerAuth(
   app: FastifyInstance,
   config: TimmyConfig,
   runtime: ManagedRuntime.ManagedRuntime<AppServices, never>,
-): Promise<void> {
-  if (!config.server.auth.enabled) return
+): Promise<AuthGate> {
+  if (!config.server.auth.enabled) return () => true
 
   const expected =
     config.server.auth.token === 'keychain'
@@ -412,21 +434,22 @@ async function registerAuth(
 
   if (!expected && loopback) {
     app.log.warn('auth enabled but no token set — allowing local (loopback) requests without auth')
-    return
-  }
-  if (!expected && !loopback) {
+  } else if (!expected && !loopback) {
     app.log.error(
       'auth enabled on a non-loopback host but no token is set — refusing all requests until a token is configured',
     )
   }
 
+  // No token: loopback is allowed (dev convenience), a network host fails closed. With a token, it
+  // must match exactly.
+  const authorize: AuthGate = expected ? (token) => token === expected : () => loopback
+
   app.addHook('onRequest', async (req, reply) => {
     const path = req.url.split('?')[0]
     if (PUBLIC_ROUTES.has(path)) return
-    const header = req.headers.authorization ?? ''
-    const token = header.startsWith('Bearer ') ? header.slice('Bearer '.length) : ''
-    if (!expected || token !== expected) {
+    if (!authorize(bearerToken(req.headers.authorization))) {
       await reply.code(401).send({ error: 'unauthorized' })
     }
   })
+  return authorize
 }
